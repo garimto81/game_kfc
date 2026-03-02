@@ -166,6 +166,44 @@ def compare_hands(h1: HandResult, h2: HandResult, reverse_rank: bool = False) ->
     return 0
 
 
+def _get_kicker_ranks(cards: list, rank_counts: 'Counter') -> list:
+    """핸드 비교용 랭크 리스트 반환 (그룹 크기 내림차순 -> 랭크 내림차순)"""
+    groups = sorted(rank_counts.items(), key=lambda x: (x[1], x[0].value), reverse=True)
+    return [r.value for r, _ in groups]
+
+
+def _is_wheel(cards: list) -> bool:
+    """A-2-3-4-5 wheel straight 여부 판정"""
+    ranks = {c.rank.value for c in cards}
+    return ranks == {14, 2, 3, 4, 5}
+
+
+def compare_hands_ofc(h1: HandResult, h2: HandResult) -> int:
+    """+1: h1 승, -1: h2 승, 0: 무승부 (OFC 규칙: kicker 비교)"""
+    # 1단계: 핸드 강도
+    if h1.hand_type != h2.hand_type:
+        return 1 if h1.hand_type > h2.hand_type else -1
+
+    # 2단계: 같은 핸드 타입 -> 랭크 그룹 비교 (kicker)
+    rc1 = Counter(c.rank for c in h1.cards)
+    rc2 = Counter(c.rank for c in h2.cards)
+    kickers1 = _get_kicker_ranks(h1.cards, rc1)
+    kickers2 = _get_kicker_ranks(h2.cards, rc2)
+
+    # STRAIGHT / STRAIGHT_FLUSH에서 wheel (A-2-3-4-5) 보정
+    if h1.hand_type in (HandType.STRAIGHT, HandType.STRAIGHT_FLUSH):
+        if _is_wheel(h1.cards):
+            kickers1 = [5]  # 5-high straight
+        if _is_wheel(h2.cards):
+            kickers2 = [5]  # 5-high straight
+
+    for k1, k2 in zip(kickers1, kickers2):
+        if k1 != k2:
+            return 1 if k1 > k2 else -1
+
+    return 0
+
+
 def apply_foul_penalty(hand: HandResult) -> HandResult:
     """Foul 발생 라인의 HandType -1등급 강등 (최하 HIGH_CARD 유지)"""
     new_type = HandType(max(1, hand.hand_type.value - 1))

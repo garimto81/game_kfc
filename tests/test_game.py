@@ -10,9 +10,9 @@ def setup_boards_for_combat(p1: Player, p2: Player):
     p1.board = OFCBoard()
     p2.board = OFCBoard()
 
-    # p1: flush back (강)
+    # p1: flush bottom (강)
     for r in [Rank.TWO, Rank.FIVE, Rank.SEVEN, Rank.NINE, Rank.KING]:
-        p1.board.back.append(Card(r, Suit.SPADE))
+        p1.board.bottom.append(Card(r, Suit.SPADE))
     p1.board.mid = [
         Card(Rank.ACE, Suit.HEART),
         Card(Rank.ACE, Suit.DIAMOND),
@@ -20,14 +20,14 @@ def setup_boards_for_combat(p1: Player, p2: Player):
         Card(Rank.THREE, Suit.SPADE),
         Card(Rank.FOUR, Suit.HEART),
     ]
-    p1.board.front = [
+    p1.board.top = [
         Card(Rank.KING, Suit.CLUB),
         Card(Rank.QUEEN, Suit.CLUB),
         Card(Rank.JACK, Suit.CLUB),
     ]
 
-    # p2: pair back (약)
-    p2.board.back = [
+    # p2: pair bottom (약)
+    p2.board.bottom = [
         Card(Rank.ACE, Suit.CLUB),
         Card(Rank.ACE, Suit.SPADE),
         Card(Rank.KING, Suit.HEART),
@@ -41,7 +41,7 @@ def setup_boards_for_combat(p1: Player, p2: Player):
         Card(Rank.THREE, Suit.HEART),
         Card(Rank.FOUR, Suit.SPADE),
     ]
-    p2.board.front = [
+    p2.board.top = [
         Card(Rank.TWO, Suit.CLUB),
         Card(Rank.THREE, Suit.CLUB),
         Card(Rank.FOUR, Suit.DIAMOND),
@@ -132,9 +132,9 @@ class TestRoundManager:
         """라운드 종료 후 보드 초기화"""
         setup_boards_for_combat(self.p1, self.p2)
         self.manager.end_round()
-        assert len(self.p1.board.back) == 0
+        assert len(self.p1.board.bottom) == 0
         assert len(self.p1.board.mid) == 0
-        assert len(self.p1.board.front) == 0
+        assert len(self.p1.board.top) == 0
 
     def test_streak_updated_after_combat(self):
         """전투 후 연승/연패 업데이트"""
@@ -305,7 +305,7 @@ class TestFantasylandReset:
         """플레이어 보드에 카드 1장 추가 (비어있지 않음)"""
         from src.board import OFCBoard
         player.board = OFCBoard()
-        player.board.back.append(Card(Rank.ACE, Suit.SPADE))
+        player.board.bottom.append(Card(Rank.ACE, Suit.SPADE))
 
     def test_fl_player_board_not_reset(self):
         """S6: fantasyland_next=True → end_round() 후 보드 리셋되지 않음"""
@@ -314,16 +314,16 @@ class TestFantasylandReset:
         self._set_nonempty_board(p1)
         manager.end_round()
         # FL 진입한 p1의 보드는 리셋되지 않아야 함
-        assert len(p1.board.back) > 0
+        assert len(p1.board.bottom) > 0
 
     def test_non_fl_player_board_reset(self):
         """S6: 일반 플레이어 보드는 end_round() 후 정상 리셋"""
         state, manager, p1, p2 = self._make_state_with_board()
         self._set_nonempty_board(p1)
         manager.end_round()
-        assert len(p1.board.back) == 0
+        assert len(p1.board.bottom) == 0
         assert len(p1.board.mid) == 0
-        assert len(p1.board.front) == 0
+        assert len(p1.board.top) == 0
 
     def test_fl_exit_board_reset(self):
         """S6: FL 탈출 후 다음 end_round()에서 보드 리셋"""
@@ -342,7 +342,7 @@ class TestFantasylandReset:
         # p1이 남아있다면 보드가 리셋되어야 함
         alive = [p for p in state.players if p.name == "p1"]
         if alive:
-            assert len(alive[0].board.back) == 0
+            assert len(alive[0].board.bottom) == 0
 
 
 class TestFantasylandKeep:
@@ -364,7 +364,7 @@ class TestFantasylandKeep:
         p1.in_fantasyland = True
         p1.board = OFCBoard()
         # Front에 스리카인드 배치
-        p1.board.front = [
+        p1.board.top = [
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.ACE, Suit.HEART),
             Card(Rank.ACE, Suit.DIAMOND),
@@ -379,7 +379,7 @@ class TestFantasylandKeep:
         from src.board import OFCBoard
         p1.in_fantasyland = True
         p1.board = OFCBoard()
-        p1.board.front = [
+        p1.board.top = [
             Card(Rank.TWO, Suit.SPADE),
             Card(Rank.THREE, Suit.HEART),
             Card(Rank.FIVE, Suit.DIAMOND),

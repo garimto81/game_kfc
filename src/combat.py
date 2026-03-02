@@ -7,7 +7,7 @@ from src.hand import apply_foul_penalty, compare_hands, evaluate_hand
 
 @dataclass
 class CombatResult:
-    line_results: dict  # {'back': 1, 'mid': -1, 'front': 0}
+    line_results: dict  # {'bottom': 1, 'mid': -1, 'top': 0}
     winner_lines: int
     is_scoop: bool
     damage: int
@@ -19,7 +19,7 @@ def get_suit_synergy_level(board: OFCBoard, suit) -> int:
     """특정 수트의 시너지 레벨 반환 (0, 1, 2, 3).
     2~3장=레벨1, 4~5장=레벨2, 6장+=레벨3
     """
-    all_cards = board.back + board.mid + board.front
+    all_cards = board.bottom + board.mid + board.top
     count = sum(1 for c in all_cards if c.suit == suit)
     if count >= 6:
         return 3
@@ -48,7 +48,7 @@ def count_synergies(board: OFCBoard, player=None) -> int:
     """같은 수트 2장 이상인 수트 수 = 활성 시너지 수.
     suit_mystery 증강체 보유 시 +1 (최대 4).
     """
-    all_cards = board.back + board.mid + board.front
+    all_cards = board.bottom + board.mid + board.top
     if not all_cards:
         return 0
     suit_counts = Counter(c.suit for c in all_cards)
@@ -100,7 +100,7 @@ class CombatResolver:
             and any(getattr(e, 'id', None) == "low_card_power" for e in events)
         )
 
-        for line in ['back', 'mid', 'front']:
+        for line in ['bottom', 'mid', 'top']:
             cards_a = getattr(board_a, line)
             cards_b = getattr(board_b, line)
 
@@ -144,8 +144,8 @@ class CombatResolver:
         # suit_bonus_spade 이벤트: ♠ 수트 시너지 카운트 +1
         if events and any(getattr(e, 'id', None) == "suit_bonus_spade" for e in events):
             from src.card import Suit
-            all_a = board_a.back + board_a.mid + board_a.front
-            all_b = board_b.back + board_b.mid + board_b.front
+            all_a = board_a.bottom + board_a.mid + board_a.top
+            all_b = board_b.bottom + board_b.mid + board_b.top
             spade_a = sum(1 for c in all_a if c.suit == Suit.SPADE)
             spade_b = sum(1 for c in all_b if c.suit == Suit.SPADE)
             if spade_a >= 2:
@@ -168,10 +168,10 @@ class CombatResolver:
         # 스톱(×8) 판정: 훌라 성공 + (상대 HP ≤ 10 OR 스쿠프+로얄플러시백)
         if hula_applied_a:
             low_stop = (player_b is not None and player_b.hp <= 10)
-            back_hand_a = evaluate_hand(board_a.back) if board_a.back else None
+            bottom_hand_a = evaluate_hand(board_a.bottom) if board_a.bottom else None
             high_stop = (
-                is_scoop_a and back_hand_a is not None
-                and back_hand_a.hand_type.value == 10
+                is_scoop_a and bottom_hand_a is not None
+                and bottom_hand_a.hand_type.value == 10
             )
             if low_stop or high_stop:
                 damage_a = damage_a // 4 * 8
@@ -183,10 +183,10 @@ class CombatResolver:
 
         if hula_applied_b:
             low_stop = (player_a is not None and player_a.hp <= 10)
-            back_hand_b = evaluate_hand(board_b.back) if board_b.back else None
+            bottom_hand_b = evaluate_hand(board_b.bottom) if board_b.bottom else None
             high_stop = (
-                is_scoop_b and back_hand_b is not None
-                and back_hand_b.hand_type.value == 10
+                is_scoop_b and bottom_hand_b is not None
+                and bottom_hand_b.hand_type.value == 10
             )
             if low_stop or high_stop:
                 damage_b = damage_b // 4 * 8

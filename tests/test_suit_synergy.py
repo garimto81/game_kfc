@@ -8,12 +8,12 @@ def board_with_suit(suit: Suit, count: int) -> OFCBoard:
     board = OFCBoard()
     ranks = list(Rank)
     for i in range(min(count, 13)):
-        if len(board.back) < 5:
-            board.back.append(Card(suit=suit, rank=ranks[i]))
+        if len(board.bottom) < 5:
+            board.bottom.append(Card(suit=suit, rank=ranks[i]))
         elif len(board.mid) < 5:
             board.mid.append(Card(suit=suit, rank=ranks[i]))
         else:
-            board.front.append(Card(suit=suit, rank=ranks[i]))
+            board.top.append(Card(suit=suit, rank=ranks[i]))
     return board
 
 class TestGetSuitSynergyLevel:
@@ -72,7 +72,7 @@ class TestGetSuitSynergyLevel:
         suits = [Suit.SPADE, Suit.HEART, Suit.DIAMOND, Suit.CLUB]
         ranks = list(Rank)
         for i, s in enumerate(suits):
-            board.back.append(Card(suit=s, rank=ranks[i]))
+            board.bottom.append(Card(suit=s, rank=ranks[i]))
         from src.combat import get_suit_synergy_level
         for s in suits:
             assert get_suit_synergy_level(board, s) == 0

@@ -271,7 +271,7 @@ class RoundManager:
     def _return_unplaced_cards(self, player) -> None:
         """FL 배치 완료 후 보드에 배치되지 않은 카드를 풀로 반환."""
         placed_ids = set()
-        for line in ['front', 'mid', 'back']:
+        for line in ['top', 'mid', 'bottom']:
             for card in getattr(player.board, line):
                 placed_ids.add(id(card))
         for card in player.shop_cards:
@@ -288,9 +288,9 @@ class RoundManager:
         from src.hand import HandType, evaluate_hand
         fl_keep_players = set()
         for player in self.state.players:
-            if player.in_fantasyland and player.board.front:
-                front_hand = evaluate_hand(player.board.front)
-                if front_hand.hand_type >= HandType.THREE_OF_A_KIND:
+            if player.in_fantasyland and player.board.top:
+                top_hand = evaluate_hand(player.board.top)
+                if top_hand.hand_type >= HandType.THREE_OF_A_KIND:
                     fl_keep_players.add(id(player))
 
         # Phase 2: 플래그 전환 + 보드 리셋

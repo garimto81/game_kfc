@@ -4,10 +4,10 @@ from src.combat import CombatResolver, CombatResult, count_synergies
 
 
 def make_flush_board(suit: Suit = Suit.SPADE) -> OFCBoard:
-    """플러시 back + 원페어 mid + 하이카드 front"""
+    """플러시 bottom + 원페어 mid + 하이카드 top"""
     board = OFCBoard()
     for r in [Rank.TWO, Rank.FIVE, Rank.SEVEN, Rank.NINE, Rank.KING]:
-        board.back.append(Card(r, suit))
+        board.bottom.append(Card(r, suit))
     board.mid = [
         Card(Rank.ACE, Suit.HEART),
         Card(Rank.ACE, Suit.DIAMOND),
@@ -15,7 +15,7 @@ def make_flush_board(suit: Suit = Suit.SPADE) -> OFCBoard:
         Card(Rank.THREE, Suit.SPADE),
         Card(Rank.FOUR, Suit.HEART),
     ]
-    board.front = [
+    board.top = [
         Card(Rank.KING, Suit.CLUB),
         Card(Rank.QUEEN, Suit.CLUB),
         Card(Rank.JACK, Suit.CLUB),
@@ -24,9 +24,9 @@ def make_flush_board(suit: Suit = Suit.SPADE) -> OFCBoard:
 
 
 def make_pair_board() -> OFCBoard:
-    """원페어 back + 원페어 mid + 하이카드 front"""
+    """원페어 bottom + 원페어 mid + 하이카드 top"""
     board = OFCBoard()
-    board.back = [
+    board.bottom = [
         Card(Rank.ACE, Suit.HEART),
         Card(Rank.ACE, Suit.DIAMOND),
         Card(Rank.KING, Suit.HEART),
@@ -40,7 +40,7 @@ def make_pair_board() -> OFCBoard:
         Card(Rank.THREE, Suit.SPADE),
         Card(Rank.FOUR, Suit.HEART),
     ]
-    board.front = [
+    board.top = [
         Card(Rank.TWO, Suit.SPADE),
         Card(Rank.THREE, Suit.HEART),
         Card(Rank.FOUR, Suit.DIAMOND),
@@ -53,12 +53,12 @@ class TestCombatResolver:
         self.resolver = CombatResolver()
 
     def test_resolve_basic_flush_beats_pair(self):
-        """플러시 back이 원페어 back을 이김"""
+        """플러시 bottom이 원페어 bottom을 이김"""
         board_a = make_flush_board()
         board_b = make_pair_board()
         result_a, result_b = self.resolver.resolve(board_a, board_b)
-        assert result_a.line_results['back'] == 1
-        assert result_b.line_results['back'] == -1
+        assert result_a.line_results['bottom'] == 1
+        assert result_b.line_results['bottom'] == -1
 
     def test_resolve_returns_two_results(self):
         """resolve는 두 개의 CombatResult 반환"""
@@ -75,7 +75,7 @@ class TestCombatResolver:
         board_a = make_flush_board()
         board_b = make_pair_board()
         result_a, result_b = self.resolver.resolve(board_a, board_b)
-        for line in ['back', 'mid', 'front']:
+        for line in ['bottom', 'mid', 'top']:
             assert result_a.line_results[line] == -result_b.line_results[line]
 
     def test_scoop_3_0(self):
@@ -142,7 +142,7 @@ class TestCombatResultStopFields:
     def test_stop_multiplier_field_not_present(self):
         """CombatResult에 stop_multiplier 필드 없음 확인"""
         result = CombatResult(
-            line_results={'back': 1, 'mid': 1, 'front': 1},
+            line_results={'bottom': 1, 'mid': 1, 'top': 1},
             winner_lines=3,
             is_scoop=True,
             damage=8,
@@ -153,7 +153,7 @@ class TestCombatResultStopFields:
     def test_combat_result_has_stop_applied_field(self):
         """CombatResult 데이터클래스에 stop_applied 필드 존재 확인"""
         result = CombatResult(
-            line_results={'back': 1, 'mid': 1, 'front': 1},
+            line_results={'bottom': 1, 'mid': 1, 'top': 1},
             winner_lines=3,
             is_scoop=True,
             damage=8,
@@ -173,7 +173,7 @@ class TestCountSynergies:
     def test_synergies_zero(self):
         """모두 다른 수트 → 시너지 0"""
         board = OFCBoard()
-        board.back = [
+        board.bottom = [
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.KING, Suit.HEART),
             Card(Rank.QUEEN, Suit.DIAMOND),
@@ -188,14 +188,14 @@ class TestCountSynergies:
         """같은 수트 5장 → 시너지 1 (그 수트만)"""
         board = OFCBoard()
         for r in [Rank.TWO, Rank.FIVE, Rank.SEVEN, Rank.NINE, Rank.KING]:
-            board.back.append(Card(r, Suit.SPADE))
+            board.bottom.append(Card(r, Suit.SPADE))
         synergies = count_synergies(board)
         assert synergies >= 1
 
     def test_synergies_3_suits(self):
         """3 종류의 수트 각 2장 이상 → 시너지 3"""
         board = OFCBoard()
-        board.back = [
+        board.bottom = [
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.KING, Suit.SPADE),
             Card(Rank.ACE, Suit.HEART),
@@ -209,7 +209,7 @@ class TestCountSynergies:
             Card(Rank.TEN, Suit.SPADE),
             Card(Rank.NINE, Suit.HEART),
         ]
-        board.front = [
+        board.top = [
             Card(Rank.EIGHT, Suit.DIAMOND),
             Card(Rank.SEVEN, Suit.CLUB),
             Card(Rank.SIX, Suit.SPADE),
@@ -220,7 +220,7 @@ class TestCountSynergies:
     def test_hula_declare_requires_3_synergies(self):
         """시너지 3개 미만 → 훌라 선언 불가"""
         board = OFCBoard()
-        board.back = [
+        board.bottom = [
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.KING, Suit.HEART),
             Card(Rank.QUEEN, Suit.DIAMOND),
@@ -240,7 +240,7 @@ class TestLowCardPower:
     def _make_same_type_boards_diff_rank(self):
         """같은 핸드 타입 (ONE_PAIR), 강화 없음, 수트 동일 패턴 — rank만 다름"""
         board_high = OFCBoard()
-        board_high.back = [
+        board_high.bottom = [
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.ACE, Suit.HEART),
             Card(Rank.KING, Suit.DIAMOND),
@@ -254,14 +254,14 @@ class TestLowCardPower:
             Card(Rank.THREE, Suit.CLUB),
             Card(Rank.FOUR, Suit.SPADE),
         ]
-        board_high.front = [
+        board_high.top = [
             Card(Rank.KING, Suit.CLUB),
             Card(Rank.QUEEN, Suit.DIAMOND),
             Card(Rank.JACK, Suit.HEART),
         ]
 
         board_low = OFCBoard()
-        board_low.back = [
+        board_low.bottom = [
             Card(Rank.TWO, Suit.SPADE),
             Card(Rank.TWO, Suit.HEART),
             Card(Rank.THREE, Suit.DIAMOND),
@@ -275,7 +275,7 @@ class TestLowCardPower:
             Card(Rank.FOUR, Suit.CLUB),
             Card(Rank.FIVE, Suit.SPADE),
         ]
-        board_low.front = [
+        board_low.top = [
             Card(Rank.TWO, Suit.CLUB),
             Card(Rank.THREE, Suit.DIAMOND),
             Card(Rank.FOUR, Suit.HEART),
@@ -313,7 +313,7 @@ class TestLowCardPower:
         """S4: 핸드 강도 차이가 있으면 low_card_power 역전 없음"""
         from src.card import Rank, Suit
         board_flush = OFCBoard()
-        board_flush.back = [
+        board_flush.bottom = [
             Card(Rank.TWO, Suit.SPADE),
             Card(Rank.FIVE, Suit.SPADE),
             Card(Rank.SEVEN, Suit.SPADE),
@@ -327,14 +327,14 @@ class TestLowCardPower:
             Card(Rank.THREE, Suit.SPADE),
             Card(Rank.FOUR, Suit.HEART),
         ]
-        board_flush.front = [
+        board_flush.top = [
             Card(Rank.KING, Suit.CLUB),
             Card(Rank.QUEEN, Suit.CLUB),
             Card(Rank.JACK, Suit.CLUB),
         ]
 
         board_pair = OFCBoard()
-        board_pair.back = [
+        board_pair.bottom = [
             Card(Rank.ACE, Suit.CLUB),
             Card(Rank.ACE, Suit.SPADE),
             Card(Rank.KING, Suit.HEART),
@@ -348,7 +348,7 @@ class TestLowCardPower:
             Card(Rank.THREE, Suit.HEART),
             Card(Rank.FOUR, Suit.SPADE),
         ]
-        board_pair.front = [
+        board_pair.top = [
             Card(Rank.TWO, Suit.CLUB),
             Card(Rank.THREE, Suit.CLUB),
             Card(Rank.FOUR, Suit.DIAMOND),
@@ -357,4 +357,4 @@ class TestLowCardPower:
         event = self._make_low_card_power_event()
         result_flush, _ = self.resolver.resolve(board_flush, board_pair, events=[event])
         # FLUSH가 ONE_PAIR를 이겨야 함 — 핸드 강도 차이 역전 없음
-        assert result_flush.line_results['back'] == 1
+        assert result_flush.line_results['bottom'] == 1

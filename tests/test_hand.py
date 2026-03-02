@@ -810,3 +810,49 @@ class TestCompareHandsReverseRank:
         # FLUSH > ONE_PAIR, reverse_rank=True여도 핸드 강도 역전 없음
         result = compare_hands(flush, pair, reverse_rank=True)
         assert result == 1  # FLUSH 여전히 승리
+
+
+class TestWheelStraightKicker:
+    """A5: wheel straight (A-2-3-4-5) kicker 비교 오류 수정"""
+
+    def test_wheel_loses_to_6_high_straight(self):
+        """A2345 vs 23456: 23456이 이겨야 함 (wheel = 5-high straight)"""
+        from src.hand import compare_hands_ofc
+        wheel = evaluate_hand([
+            Card(Rank.ACE, Suit.SPADE),
+            Card(Rank.TWO, Suit.HEART),
+            Card(Rank.THREE, Suit.DIAMOND),
+            Card(Rank.FOUR, Suit.CLUB),
+            Card(Rank.FIVE, Suit.SPADE),
+        ])
+        six_high = evaluate_hand([
+            Card(Rank.TWO, Suit.SPADE),
+            Card(Rank.THREE, Suit.HEART),
+            Card(Rank.FOUR, Suit.DIAMOND),
+            Card(Rank.FIVE, Suit.CLUB),
+            Card(Rank.SIX, Suit.SPADE),
+        ])
+        assert wheel.hand_type == HandType.STRAIGHT
+        assert six_high.hand_type == HandType.STRAIGHT
+        result = compare_hands_ofc(wheel, six_high)
+        assert result == -1  # 23456 승리
+
+    def test_wheel_vs_wheel_is_tie(self):
+        """A2345 vs A2345는 tie"""
+        from src.hand import compare_hands_ofc
+        wheel1 = evaluate_hand([
+            Card(Rank.ACE, Suit.SPADE),
+            Card(Rank.TWO, Suit.HEART),
+            Card(Rank.THREE, Suit.DIAMOND),
+            Card(Rank.FOUR, Suit.CLUB),
+            Card(Rank.FIVE, Suit.SPADE),
+        ])
+        wheel2 = evaluate_hand([
+            Card(Rank.ACE, Suit.HEART),
+            Card(Rank.TWO, Suit.DIAMOND),
+            Card(Rank.THREE, Suit.CLUB),
+            Card(Rank.FOUR, Suit.SPADE),
+            Card(Rank.FIVE, Suit.HEART),
+        ])
+        result = compare_hands_ofc(wheel1, wheel2)
+        assert result == 0  # 무승부
