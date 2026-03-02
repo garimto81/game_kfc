@@ -5,6 +5,7 @@ class CardWidget extends StatelessWidget {
   final ofc.Card card;
   final bool faceDown;
   final bool draggable;
+  final bool miniMode;
   final VoidCallback? onTap;
 
   const CardWidget({
@@ -12,6 +13,7 @@ class CardWidget extends StatelessWidget {
     required this.card,
     this.faceDown = false,
     this.draggable = false,
+    this.miniMode = false,
     this.onTap,
   });
 
@@ -56,6 +58,36 @@ class CardWidget extends StatelessWidget {
               style: TextStyle(color: Colors.white24, fontSize: 18),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: Colors.grey[300]!, width: 0.5),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              card.rank.rankName,
+              style: TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+                color: _suitColor,
+                height: 1.0,
+              ),
+            ),
+            Text(
+              card.suit.suitSymbol,
+              style: TextStyle(fontSize: 8, color: _suitColor, height: 1.0),
+            ),
+          ],
         ),
       ),
     );
@@ -138,6 +170,19 @@ class CardWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (miniMode) {
+      if (faceDown) {
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(2),
+            color: const Color(0xFF1565C0),
+            border: Border.all(color: Colors.white24, width: 0.5),
+          ),
+        );
+      }
+      return _buildMiniCard();
+    }
+
     final cardContent = AnimatedSwitcher(
       duration: const Duration(milliseconds: 300),
       transitionBuilder: (child, animation) {

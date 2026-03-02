@@ -62,8 +62,8 @@ class FantasylandChecker {
     final bottomResult = evaluateHand(board.bottom);
 
     if (topResult.handType == HandType.threeOfAKind) return true;
-    if (midResult.handType.index >= HandType.fourOfAKind.index) return true;
-    if (bottomResult.handType.index >= HandType.fourOfAKind.index) return true;
+    if (midResult.handType.value >= HandType.fourOfAKind.value) return true;
+    if (bottomResult.handType.value >= HandType.fourOfAKind.value) return true;
 
     return false;
   }

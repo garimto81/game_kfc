@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/game_provider.dart';
 import 'game_screen.dart';
-import 'lobby_screen.dart';
+import 'online_lobby_screen.dart';
 import 'settings_screen.dart';
 import 'tutorial_screen.dart';
 
@@ -106,11 +106,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             const SizedBox(height: 16),
             _buildMenuButton(
               context: context,
-              label: 'LAN Play',
-              icon: Icons.wifi,
+              label: 'Online Play',
+              icon: Icons.public,
               onPressed: () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const LobbyScreen()),
+                  MaterialPageRoute(
+                      builder: (_) => const OnlineLobbyScreen()),
                 );
               },
             ),

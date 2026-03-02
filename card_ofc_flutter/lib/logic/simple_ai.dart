@@ -29,6 +29,55 @@ class SimpleAI {
   }
 
   // ──────────────────────────────────────────────
+  // Fantasyland: 14~17장 → 13장 배치
+  // ──────────────────────────────────────────────
+
+  /// FL 플레이어 배치: 14~17장 → 13장 배치 (Bottom→Mid→Top)
+  PlacementDecision decideFantasyland(List<Card> hand, OFCBoard board) {
+    final sorted = List<Card>.from(hand)
+      ..sort((a, b) => b.rank.value.compareTo(a.rank.value));
+
+    var placements = <Card, String>{};
+    var tempBoard = board;
+
+    // Bottom(5) → Mid(5) → Top(3) 순으로 greedy 배치
+    int placed = 0;
+    for (final card in sorted) {
+      if (placed >= 13) break;
+      final line = _chooseLine(card, tempBoard);
+      if (tempBoard.canPlace(line)) {
+        placements[card] = line;
+        tempBoard = tempBoard.placeCard(line, card);
+        placed++;
+      }
+    }
+
+    // Foul 검사: Foul이면 safe 재배치
+    if (tempBoard.isFull() && checkFoul(tempBoard)) {
+      placements.clear();
+      tempBoard = board;
+      placed = 0;
+      for (final card in sorted) {
+        if (placed >= 13) break;
+        String line;
+        if (tempBoard.canPlace('bottom')) {
+          line = 'bottom';
+        } else if (tempBoard.canPlace('mid')) {
+          line = 'mid';
+        } else {
+          line = 'top';
+        }
+        placements[card] = line;
+        tempBoard = tempBoard.placeCard(line, card);
+        placed++;
+      }
+    }
+
+    // 나머지 카드는 discardFantasylandRemainder가 처리
+    return PlacementDecision(placements: placements, discard: null);
+  }
+
+  // ──────────────────────────────────────────────
   // Round 0: 5장 초기 배치
   // ──────────────────────────────────────────────
 

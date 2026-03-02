@@ -273,7 +273,9 @@ class GameController {
 
   /// 핸드 종료: 점수 계산 → FL 확인 → gameOver 전환 (multi-hand 지원)
   GameState finishHand() {
-    scoreRound();
+    if (_state.phase != GamePhase.scoring) {
+      scoreRound();
+    }
     checkFantasyland();
     final hasFL = _state.players.any((p) => p.isInFantasyland);
     if (!hasFL && _state.handNumber >= _state.targetHands) {
@@ -314,7 +316,11 @@ class GameController {
   // ──────────────────────────────────────────────
 
   Player _getPlayer(String playerId) {
-    return _state.players.firstWhere((p) => p.id == playerId);
+    final idx = _state.players.indexWhere((p) => p.id == playerId);
+    if (idx == -1) {
+      throw StateError('Player not found: $playerId');
+    }
+    return _state.players[idx];
   }
 
   GameState _updatePlayerHand(String playerId, List<Card> cards) {

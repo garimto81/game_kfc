@@ -78,7 +78,14 @@ class GameNotifier extends _$GameNotifier {
 
   /// 배치 확정 → AI 자동 처리 → 다음 딜링까지 일괄 수행
   void confirmPlacement() {
-    final currentPlayerId = state.players[state.currentPlayerIndex].id;
+    final currentPlayer = state.players[state.currentPlayerIndex];
+    final currentPlayerId = currentPlayer.id;
+
+    // FL 플레이어: 보드 13장 배치 완료, 남은 카드 자동 버림
+    if (currentPlayer.isInFantasyland && currentPlayer.hand.isNotEmpty) {
+      state = _controller.discardFantasylandRemainder(currentPlayerId);
+    }
+
     state = _controller.confirmPlacement(currentPlayerId);
 
     // 스코어링 완료 → FL/gameOver 전환
@@ -120,11 +127,15 @@ class GameNotifier extends _$GameNotifier {
     return currentPlayer.name == 'AI';
   }
 
-  /// 현재 플레이어에게 딜링
+  /// 현재 플레이어에게 딜링 (FL 플레이어는 14~17장)
   void _dealForCurrentPlayer() {
     if (state.players.isEmpty) return;
-    final currentPlayerId = state.players[state.currentPlayerIndex].id;
-    if (state.roundPhase == RoundPhase.initial) {
+    final currentPlayer = state.players[state.currentPlayerIndex];
+    final currentPlayerId = currentPlayer.id;
+
+    if (currentPlayer.isInFantasyland) {
+      state = _controller.dealFantasyland(currentPlayerId);
+    } else if (state.roundPhase == RoundPhase.initial) {
       state = _controller.dealInitial(currentPlayerId);
     } else {
       state = _controller.dealPineapple(currentPlayerId);
@@ -136,20 +147,35 @@ class GameNotifier extends _$GameNotifier {
     if (!_isAITurn()) return;
 
     final ai = SimpleAI();
-    _dealForCurrentPlayer();
+    _dealForCurrentPlayer(); // FL 체크 포함
 
     final currentPlayer = state.players[state.currentPlayerIndex];
-    final decision = ai.decide(
-      currentPlayer.hand,
-      currentPlayer.board,
-      state.currentRound,
-    );
 
-    for (final entry in decision.placements.entries) {
-      placeCard(entry.key, entry.value);
-    }
-    if (decision.discard != null) {
-      discardCard(decision.discard!);
+    if (currentPlayer.isInFantasyland) {
+      // AI FL: 13장 배치 + 나머지 버림
+      final flDecision = ai.decideFantasyland(
+        currentPlayer.hand,
+        currentPlayer.board,
+      );
+      for (final entry in flDecision.placements.entries) {
+        placeCard(entry.key, entry.value);
+      }
+      // 남은 카드 자동 버림
+      final aiId = state.players[state.currentPlayerIndex].id;
+      state = _controller.discardFantasylandRemainder(aiId);
+    } else {
+      final decision = ai.decide(
+        currentPlayer.hand,
+        currentPlayer.board,
+        state.currentRound,
+      );
+
+      for (final entry in decision.placements.entries) {
+        placeCard(entry.key, entry.value);
+      }
+      if (decision.discard != null) {
+        discardCard(decision.discard!);
+      }
     }
 
     // AI confirm → 라운드 전환

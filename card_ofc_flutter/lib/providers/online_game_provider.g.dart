@@ -1,27 +1,27 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'network_game_provider.dart';
+part of 'online_game_provider.dart';
 
 // **************************************************************************
 // RiverpodGenerator
 // **************************************************************************
 
-String _$networkGameNotifierHash() =>
-    r'9d1e6a7a654e4285b06ce2c87c24583ddbe67ffa';
+String _$onlineGameNotifierHash() =>
+    r'eb709290b165791cb22d453027af0d820e2889c0';
 
-/// See also [NetworkGameNotifier].
-@ProviderFor(NetworkGameNotifier)
-final networkGameNotifierProvider =
-    NotifierProvider<NetworkGameNotifier, NetworkState>.internal(
-      NetworkGameNotifier.new,
-      name: r'networkGameNotifierProvider',
+/// See also [OnlineGameNotifier].
+@ProviderFor(OnlineGameNotifier)
+final onlineGameNotifierProvider =
+    NotifierProvider<OnlineGameNotifier, OnlineState>.internal(
+      OnlineGameNotifier.new,
+      name: r'onlineGameNotifierProvider',
       debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
           ? null
-          : _$networkGameNotifierHash,
+          : _$onlineGameNotifierHash,
       dependencies: null,
       allTransitiveDependencies: null,
     );
 
-typedef _$NetworkGameNotifier = Notifier<NetworkState>;
+typedef _$OnlineGameNotifier = Notifier<OnlineState>;
 // ignore_for_file: type=lint
 // ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member, deprecated_member_use_from_same_package

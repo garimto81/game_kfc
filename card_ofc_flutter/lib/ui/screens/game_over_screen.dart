@@ -73,7 +73,7 @@ class GameOverScreen extends ConsumerWidget {
                       final withAI = currentNames.contains('AI');
                       final humanNames =
                           currentNames.where((n) => n != 'AI').toList();
-                      notifier.startGame(humanNames, withAI: withAI);
+                      notifier.startGame(humanNames, withAI: withAI, targetHands: gameState.targetHands);
                       Navigator.of(context).pushReplacement(
                         MaterialPageRoute(builder: (_) => const GameScreen()),
                       );

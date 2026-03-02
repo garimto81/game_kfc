@@ -18,7 +18,8 @@ class ScoreScreen extends ConsumerWidget {
     final scores = ref.watch(roundScoresProvider);
     final details = ref.watch(scoreDetailsProvider);
 
-    final hasMoreHands = gameState.handNumber < gameState.targetHands;
+    final hasFL = gameState.players.any((p) => p.isInFantasyland);
+    final hasMoreHands = gameState.handNumber < gameState.targetHands || hasFL;
 
     return Scaffold(
       backgroundColor: Colors.teal[900],
@@ -46,7 +47,36 @@ class ScoreScreen extends ConsumerWidget {
                     .animate()
                     .fadeIn(duration: 300.ms)
                     .slideY(begin: -0.2, end: 0),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                if (hasFL)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.amber[700],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.auto_awesome,
+                            size: 16, color: Colors.white),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${gameState.players.where((p) => p.isInFantasyland).map((p) => p.name).join(", ")} enters Fantasyland!',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  )
+                      .animate()
+                      .fadeIn(duration: 400.ms, delay: 100.ms)
+                      .shimmer(duration: 1200.ms, delay: 500.ms),
+                const SizedBox(height: 8),
                 if (scores != null)
                   ScorePanelWidget(scores: scores)
                       .animate()
