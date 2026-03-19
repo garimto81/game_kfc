@@ -20,9 +20,9 @@ class RoomManager:
         # 로비 WebSocket 리스너 목록
         self._lobby_listeners: list[WebSocket] = []
 
-    def create_room(self, name: str, max_players: int = 2) -> Room:
+    def create_room(self, name: str, max_players: int = 6, turn_time_limit: int = 0) -> Room:
         room_id = uuid.uuid4().hex[:8]
-        room = Room(id=room_id, name=name, max_players=max_players)
+        room = Room(id=room_id, name=name, max_players=max_players, turn_time_limit=turn_time_limit)
         self.rooms[room_id] = room
         self._connections[room_id] = {}
         return room
@@ -66,6 +66,8 @@ class RoomManager:
         player_id = uuid.uuid4().hex[:8]
         session_token = uuid.uuid4().hex
         room.players.append(player_name)
+        if room.host_id is None:
+            room.host_id = player_id
         self._connections[room_id][player_id] = {
             "name": player_name,
             "ws": websocket,
@@ -101,6 +103,13 @@ class RoomManager:
         if info and info["name"] in room.players:
             room.players.remove(info["name"])
         self._disconnected.pop(player_id, None)
+        # Host transfer if needed
+        if room and room.host_id == player_id:
+            conn = self._connections.get(room_id, {})
+            if conn:
+                room.host_id = next(iter(conn))
+            else:
+                room.host_id = None
         # 세션 토큰 정리
         tokens_to_remove = [
             t for t, v in self._session_tokens.items()
@@ -187,4 +196,8 @@ class RoomManager:
 
     def get_room_dict(self, room: Room) -> dict:
         """Room을 dict로 변환한다 (created_at 포함)."""
-        return room.model_dump()
+        d = room.model_dump()
+        d["playerCount"] = len(room.players)
+        d["maxPlayers"] = room.max_players
+        d["turnTimeLimit"] = room.turn_time_limit
+        return d

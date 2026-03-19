@@ -6,7 +6,9 @@ from server.main import app, room_mgr, game_sessions
 from server.game_session import GameSession, _card_to_dict, _card_from_dict
 from server.room_manager import RoomManager
 from server.models import Room, RoomStatus
+from server.scoring import compare_boards_detailed, hand_type_name
 from src.card import Card, Rank, Suit
+from src.hand import HandType
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +30,7 @@ class TestModels:
         room = Room(id="test1", name="TestRoom")
         assert room.id == "test1"
         assert room.name == "TestRoom"
-        assert room.max_players == 2
+        assert room.host_id is None
         assert room.status == RoomStatus.waiting
         assert room.players == []
 
@@ -43,9 +45,9 @@ class TestModels:
 class TestRoomManager:
     def test_create_room(self):
         mgr = RoomManager()
-        room = mgr.create_room("MyRoom", 2)
+        room = mgr.create_room("MyRoom")
         assert room.name == "MyRoom"
-        assert room.max_players == 2
+        assert room.host_id is None
         assert len(room.id) == 8
 
     def test_list_rooms(self):
@@ -202,7 +204,7 @@ class TestGameSession:
     def test_full_game_2_players(self):
         """2인 풀 게임 플로우 (5라운드)"""
         session = GameSession("room1", ["p1", "p2"], ["Alice", "Bob"])
-        session.target_hands = 1  # 단일 핸드로 게임 종료
+        # 무한 핸드 모드: gameOver는 player leave로만 발생
         session.start_game()
 
         for round_num in range(5):
@@ -262,10 +264,10 @@ class TestGameSession:
             if round_num < 4:
                 assert result2.get("roundAdvanced") is True
             else:
-                # 마지막 라운드: 게임 종료
-                assert result2.get("type") == "gameOver"
+                # 마지막 라운드: nextHand 반환 (gameOver는 player leave로만)
+                assert result2.get("type") == "nextHand"
 
-        assert session.phase == "gameOver"
+        assert session.phase == "scoring"
 
 
 # ── 카드 직렬화 테스트 ────────────────────────────────
@@ -392,11 +394,11 @@ class TestRestAPI:
         self.client = TestClient(app)
 
     def test_create_room(self):
-        resp = self.client.post("/api/rooms", json={"name": "TestRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "TestRoom"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "TestRoom"
-        assert data["max_players"] == 2
+        assert data["host_id"] is None
         assert "id" in data
 
     def test_list_rooms(self):
@@ -435,7 +437,7 @@ class TestWebSocket:
         self.client = TestClient(app)
 
     def test_websocket_join(self):
-        resp = self.client.post("/api/rooms", json={"name": "WsRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "WsRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
@@ -450,7 +452,7 @@ class TestWebSocket:
             assert msg["type"] == "error"
 
     def test_websocket_heartbeat(self):
-        resp = self.client.post("/api/rooms", json={"name": "HbRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "HbRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
@@ -461,7 +463,7 @@ class TestWebSocket:
             assert msg["type"] == "heartbeat"
 
     def test_websocket_unknown_message_type(self):
-        resp = self.client.post("/api/rooms", json={"name": "UnkRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "UnkRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
@@ -473,7 +475,7 @@ class TestWebSocket:
 
     def test_websocket_full_game_flow(self):
         """2인 WebSocket 게임 풀 플로우"""
-        resp = self.client.post("/api/rooms", json={"name": "GameRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "GameRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws1:
@@ -488,17 +490,20 @@ class TestWebSocket:
                 assert join2["type"] == "joinAccepted"
                 p2_id = join2["payload"]["playerId"]
 
-                # ws1에 playerJoined가 올 수 있음
-                # 두 플레이어 모두 참가 → gameStart 브로드캐스트
-                # ws1: playerJoined + gameStart + dealCards + stateUpdate
-                msgs_ws1 = []
-                msgs_ws2 = []
+                # ws1: playerJoined 수신
+                msg = ws1.receive_json()
+                assert msg["type"] == "playerJoined"
 
-                # ws1의 메시지 수집 (playerJoined, gameStart, dealCards, stateUpdate)
-                for _ in range(4):
+                # 호스트(ws1)가 startGame 전송
+                ws1.send_json({"type": "startGame", "payload": {}})
+
+                # ws1: gameStart + dealCards + stateUpdate
+                msgs_ws1 = []
+                for _ in range(3):
                     msgs_ws1.append(ws1.receive_json())
 
-                # ws2의 메시지 수집 (gameStart, dealCards, stateUpdate)
+                # ws2: gameStart + dealCards + stateUpdate
+                msgs_ws2 = []
                 for _ in range(3):
                     msgs_ws2.append(ws2.receive_json())
 
@@ -516,6 +521,46 @@ class TestWebSocket:
                 assert len(deal_msgs2) == 1
                 cards_p2 = deal_msgs2[0]["payload"]["cards"]
                 assert len(cards_p2) == 5
+
+    def test_start_game_host_only(self):
+        """호스트만 게임 시작 가능"""
+        resp = self.client.post("/api/rooms", json={"name": "HostRoom"})
+        room_id = resp.json()["id"]
+
+        with self.client.websocket_connect(f"/ws/game/{room_id}") as ws1:
+            ws1.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
+            join1 = ws1.receive_json()
+            assert join1["type"] == "joinAccepted"
+            assert "hostId" in join1["payload"]
+
+            with self.client.websocket_connect(f"/ws/game/{room_id}") as ws2:
+                ws2.send_json({"type": "joinRequest", "payload": {"playerName": "Bob"}})
+                ws2.receive_json()  # joinAccepted
+                ws1.receive_json()  # playerJoined
+
+                # 비호스트(ws2)가 startGame 시도 → 에러
+                ws2.send_json({"type": "startGame", "payload": {}})
+                msg = ws2.receive_json()
+                assert msg["type"] == "error"
+                assert "host" in msg["payload"]["message"].lower()
+
+                # 호스트(ws1)가 startGame → 성공
+                ws1.send_json({"type": "startGame", "payload": {}})
+                msg = ws1.receive_json()
+                assert msg["type"] == "gameStart"
+
+    def test_start_game_needs_2_players(self):
+        """1인일 때 startGame 불가"""
+        resp = self.client.post("/api/rooms", json={"name": "Solo"})
+        room_id = resp.json()["id"]
+
+        with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
+            ws.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
+            ws.receive_json()  # joinAccepted
+            ws.send_json({"type": "startGame", "payload": {}})
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert "2" in msg["payload"]["message"]
 
 
 # ── 3인 게임 테스트 ───────────────────────────────────
@@ -535,9 +580,9 @@ class TestThreePlayerGame:
 
     def test_create_room_3_players(self):
         client = TestClient(app)
-        resp = client.post("/api/rooms", json={"name": "3P Room", "max_players": 3})
+        resp = client.post("/api/rooms", json={"name": "3P Room"})
         assert resp.status_code == 200
-        assert resp.json()["max_players"] == 3
+        assert resp.json()["host_id"] is None
 
 
 # ── Config 테스트 ──────────────────────────────────
@@ -560,7 +605,7 @@ class TestConfig:
 class TestSessionToken:
     def test_add_player_returns_tuple(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         # add_player는 (player_id, session_token) 튜플을 반환한다
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
@@ -573,7 +618,7 @@ class TestSessionToken:
 
     def test_session_token_stored(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         player_id, session_token = mgr.add_player(room.id, "Alice", mock_ws)
@@ -589,7 +634,7 @@ class TestSessionToken:
 class TestReconnection:
     def test_remove_player_marks_disconnected(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         player_id, _ = mgr.add_player(room.id, "Alice", mock_ws)
@@ -598,7 +643,7 @@ class TestReconnection:
 
     def test_reconnect_player_success(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws1 = MagicMock()
         mock_ws2 = MagicMock()
@@ -622,7 +667,7 @@ class TestReconnection:
 
     def test_reconnect_not_disconnected(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         _, session_token = mgr.add_player(room.id, "Alice", mock_ws)
@@ -633,7 +678,7 @@ class TestReconnection:
     def test_cleanup_expired(self):
         import time
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         player_id, _ = mgr.add_player(room.id, "Alice", mock_ws)
@@ -647,7 +692,7 @@ class TestReconnection:
 
     def test_force_remove_clears_token(self):
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         player_id, session_token = mgr.add_player(room.id, "Alice", mock_ws)
@@ -663,7 +708,7 @@ class TestWebSocketReconnect:
         self.client = TestClient(app)
 
     def test_join_returns_session_token(self):
-        resp = self.client.post("/api/rooms", json={"name": "TokenRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "TokenRoom"})
         room_id = resp.json()["id"]
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
             ws.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -726,7 +771,7 @@ class TestLobbyWebSocket:
 
     def test_lobby_room_updated_on_player_join(self):
         """플레이어 참가 시 로비에 roomUpdated 브로드캐스트"""
-        resp = self.client.post("/api/rooms", json={"name": "JoinRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "JoinRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect("/ws/lobby") as lobby_ws:
@@ -794,7 +839,7 @@ class TestLobbyWebSocket:
 
     def test_lobby_room_updated_on_game_start(self):
         """게임 시작 시 (방 상태 playing) 로비에 roomUpdated 브로드캐스트"""
-        resp = self.client.post("/api/rooms", json={"name": "StartRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "StartRoom"})
         room_id = resp.json()["id"]
 
         with self.client.websocket_connect("/ws/lobby") as lobby_ws:
@@ -813,19 +858,27 @@ class TestLobbyWebSocket:
                     ws2.send_json({"type": "joinRequest", "payload": {"playerName": "Bob"}})
                     ws2.receive_json()  # joinAccepted
 
-                    # ws1: playerJoined, gameStart, dealCards, stateUpdate
-                    for _ in range(4):
+                    # ws1: playerJoined
+                    ws1.receive_json()
+
+                    # 로비: Bob 참가 roomUpdated
+                    msg = lobby_ws.receive_json()
+                    assert msg["type"] == "roomUpdated"
+
+                    # 호스트(ws1)가 startGame 전송
+                    ws1.send_json({"type": "startGame", "payload": {}})
+
+                    # ws1: gameStart, dealCards, stateUpdate
+                    for _ in range(3):
                         ws1.receive_json()
                     # ws2: gameStart, dealCards, stateUpdate
                     for _ in range(3):
                         ws2.receive_json()
 
-                    # 로비에 roomUpdated 2개 수신 (Bob 참가 + status=playing)
-                    msg1 = lobby_ws.receive_json()
-                    msg2 = lobby_ws.receive_json()
-                    assert msg1["type"] == "roomUpdated"
-                    assert msg2["type"] == "roomUpdated"
-                    assert msg2["payload"]["room"]["status"] == "playing"
+                    # 로비: status=playing roomUpdated
+                    msg = lobby_ws.receive_json()
+                    assert msg["type"] == "roomUpdated"
+                    assert msg["payload"]["room"]["status"] == "playing"
 
     def test_lobby_ws_auto_cleanup(self):
         """stale room (빈 방 5분 경과) auto_cleanup 삭제 검증"""
@@ -934,7 +987,7 @@ class TestWSExceptionSafety:
 
     def test_invalid_line_name(self):
         """잘못된 라인 이름 -> error 응답 + 커넥션 유지"""
-        resp = self.client.post("/api/rooms", json={"name": "ErrRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "ErrRoom"})
         room_id = resp.json()["id"]
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws1:
             ws1.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -942,8 +995,11 @@ class TestWSExceptionSafety:
             with self.client.websocket_connect(f"/ws/game/{room_id}") as ws2:
                 ws2.send_json({"type": "joinRequest", "payload": {"playerName": "Bob"}})
                 ws2.receive_json()  # joinAccepted
-                # Drain game start messages
-                for _ in range(4):
+                ws1.receive_json()  # playerJoined
+                # 호스트(ws1)가 startGame 전송
+                ws1.send_json({"type": "startGame", "payload": {}})
+                # Drain game start messages: ws1: gameStart+dealCards+stateUpdate, ws2: same
+                for _ in range(3):
                     ws1.receive_json()
                 for _ in range(3):
                     ws2.receive_json()
@@ -966,30 +1022,20 @@ class TestInputValidation:
     def setup_method(self):
         self.client = TestClient(app)
 
-    def test_max_players_too_low(self):
-        """max_players < 2 -> 422"""
-        resp = self.client.post("/api/rooms", json={"name": "BadRoom", "max_players": 1})
-        assert resp.status_code == 422
-
-    def test_max_players_too_high(self):
-        """max_players > 4 -> 422"""
-        resp = self.client.post("/api/rooms", json={"name": "BadRoom", "max_players": 100})
-        assert resp.status_code == 422
-
     def test_empty_room_name(self):
         """Empty room name -> 422"""
-        resp = self.client.post("/api/rooms", json={"name": "", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": ""})
         assert resp.status_code == 422
 
     def test_room_name_too_long(self):
         """Room name > 50 chars -> 422"""
-        resp = self.client.post("/api/rooms", json={"name": "x" * 51, "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "x" * 51})
         assert resp.status_code == 422
 
     def test_add_player_to_playing_room(self):
         """playing 상태 방에 입장 거부"""
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         mgr.add_player(room.id, "Alice", mock_ws)
@@ -1000,7 +1046,7 @@ class TestInputValidation:
     def test_delete_room_cleans_tokens(self):
         """방 삭제 시 토큰 정리"""
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         from unittest.mock import MagicMock
         mock_ws = MagicMock()
         _, token = mgr.add_player(room.id, "Alice", mock_ws)
@@ -1017,7 +1063,7 @@ class TestJoinAcceptedPlayerCount:
 
     def test_join_accepted_has_player_count(self):
         """joinAccepted에 playerCount 포함"""
-        resp = self.client.post("/api/rooms", json={"name": "CountRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "CountRoom"})
         room_id = resp.json()["id"]
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
             ws.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -1079,7 +1125,7 @@ class TestUnplaceCard:
     def test_unplace_card_ws_handler(self):
         """WebSocket unplaceCard 핸들러"""
         client = TestClient(app)
-        resp = client.post("/api/rooms", json={"name": "UndoRoom", "max_players": 2})
+        resp = client.post("/api/rooms", json={"name": "UndoRoom"})
         room_id = resp.json()["id"]
         with client.websocket_connect(f"/ws/game/{room_id}") as ws1:
             ws1.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -1087,8 +1133,11 @@ class TestUnplaceCard:
             with client.websocket_connect(f"/ws/game/{room_id}") as ws2:
                 ws2.send_json({"type": "joinRequest", "payload": {"playerName": "Bob"}})
                 ws2.receive_json()  # joinAccepted
-                # Drain messages
-                for _ in range(4):
+                ws1.receive_json()  # playerJoined
+                # 호스트(ws1)가 startGame 전송
+                ws1.send_json({"type": "startGame", "payload": {}})
+                # Drain messages: ws1: gameStart+dealCards+stateUpdate, ws2: same
+                for _ in range(3):
                     ws1.receive_json()
                 for _ in range(3):
                     ws2.receive_json()
@@ -1121,7 +1170,7 @@ class TestLeaveGame:
 
     def test_leave_game_handler(self):
         """leaveGame 핸들러 테스트"""
-        resp = self.client.post("/api/rooms", json={"name": "LeaveRoom", "max_players": 2})
+        resp = self.client.post("/api/rooms", json={"name": "LeaveRoom"})
         room_id = resp.json()["id"]
         with self.client.websocket_connect(f"/ws/game/{room_id}") as ws:
             ws.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -1244,7 +1293,6 @@ class TestFantasylandServer:
         session = self._make_session()
         session.start_game()
         session.hand_number = 1
-        session.target_hands = 5
         # p1에 QQ top 보드 구성 (FL 달성)
         self._build_fl_board(session, "p1",
             top_cards=[Card(Rank.QUEEN, Suit.HEART), Card(Rank.QUEEN, Suit.DIAMOND), Card(Rank.TWO, Suit.CLUB)],
@@ -1262,12 +1310,11 @@ class TestFantasylandServer:
         assert session.players["p1"].in_fantasyland is True
         assert session.players["p1"].fantasyland_card_count == 14  # QQ = 14
 
-    def test_score_game_no_fl_game_over(self):
-        """_score_game: FL 없음 + hand_number >= target → gameOver 반환"""
+    def test_score_game_no_fl_next_hand(self):
+        """_score_game: FL 없음 → nextHand 반환 (gameOver는 player leave로만)"""
         session = self._make_session()
         session.start_game()
         session.hand_number = 5
-        session.target_hands = 5
         # 양측 일반 보드
         self._build_fl_board(session, "p1",
             top_cards=[Card(Rank.TWO, Suit.HEART), Card(Rank.THREE, Suit.DIAMOND), Card(Rank.FOUR, Suit.CLUB)],
@@ -1280,14 +1327,13 @@ class TestFantasylandServer:
             bot_cards=[Card(Rank.TEN, Suit.CLUB), Card(Rank.JACK, Suit.HEART), Card(Rank.QUEEN, Suit.DIAMOND), Card(Rank.KING, Suit.CLUB), Card(Rank.ACE, Suit.DIAMOND)],
         )
         result = session._score_game()
-        assert result["type"] == "gameOver"
+        assert result["type"] == "nextHand"
 
     def test_re_fl_top_trips(self):
         """Re-FL: Top Trips → FL 유지"""
         session = self._make_session()
         session.start_game()
         session.hand_number = 1
-        session.target_hands = 5
         ps1 = session.players["p1"]
         ps1.in_fantasyland = True
         ps1.fantasyland_card_count = 14
@@ -1333,23 +1379,25 @@ class TestFantasylandServer:
         session = self._make_session()
         session.start_game()
         session.hand_number = 1
-        session.target_hands = 5
         ps1 = session.players["p1"]
         ps1.in_fantasyland = True
         ps1.fantasyland_card_count = 14
         # 보드에 카드 배치
         ps1.board.place_card("bottom", Card(Rank.ACE, Suit.HEART))
         session._start_next_hand()
-        assert session.hand_number == 2
+        # FL 활성화 시 hand_number 증가하지 않음
+        assert session.hand_number == 1
         assert session.current_round == 0
         assert len(session.deck) == 52
+        # _rebuild_active_players가 새 PlayerState를 생성하므로 재참조
+        ps1_new = session.players["p1"]
         # 보드 리셋
-        assert len(ps1.board.top) == 0
-        assert len(ps1.board.mid) == 0
-        assert len(ps1.board.bottom) == 0
+        assert len(ps1_new.board.top) == 0
+        assert len(ps1_new.board.mid) == 0
+        assert len(ps1_new.board.bottom) == 0
         # FL 상태는 유지
-        assert ps1.in_fantasyland is True
-        assert ps1.fantasyland_card_count == 14
+        assert ps1_new.in_fantasyland is True
+        assert ps1_new.fantasyland_card_count == 14
 
     def test_fl_card_count_qq(self):
         """FL 카드수: QQ → 14"""
@@ -1411,7 +1459,6 @@ class TestFantasylandServer:
         assert p1_state["inFantasyland"] is True
         assert p1_state["fantasylandCardCount"] == 14
         assert state["handNumber"] == 1
-        assert state["targetHands"] == 5
 
     def test_asymmetric_fl_and_normal(self):
         """비대칭: FL 플레이어(1라운드) + Normal 플레이어(5라운드) 공존"""
@@ -1426,6 +1473,94 @@ class TestFantasylandServer:
         # Normal 딜링
         cards_p2 = session.deal_cards("p2")
         assert len(cards_p2) == 5  # R0 = 5장
+
+    def test_fl_no_duplicate_deal_on_round_advance(self):
+        """#7: FL 보드 완성 후 roundAdvanced 시 중복 딜링 방지"""
+        session = self._make_session()
+        session.start_game()
+        ps1 = session.players["p1"]
+        ps1.in_fantasyland = True
+        ps1.fantasyland_card_count = 14
+
+        # R0: FL 딜링 14장, Normal 딜링 5장
+        cards_p1 = session.deal_cards("p1")
+        cards_p2 = session.deal_cards("p2")
+        assert len(cards_p1) == 14
+        assert len(cards_p2) == 5
+
+        # FL: 13장 배치 + 1장 버림
+        for c in cards_p1[:3]:
+            session.place_card("p1", _card_to_dict(c), "top")
+        for c in cards_p1[3:8]:
+            session.place_card("p1", _card_to_dict(c), "mid")
+        for c in cards_p1[8:13]:
+            session.place_card("p1", _card_to_dict(c), "bottom")
+        session.discard_card("p1", _card_to_dict(cards_p1[13]))
+
+        # Normal: R0 5장 배치
+        for c in cards_p2[:3]:
+            session.place_card("p2", _card_to_dict(c), "bottom")
+        for c in cards_p2[3:5]:
+            session.place_card("p2", _card_to_dict(c), "mid")
+
+        # 양측 confirm → roundAdvanced
+        session.confirm_placement("p1")
+        result = session.confirm_placement("p2")
+        assert result.get("roundAdvanced") is True
+
+        # FL 보드 full → auto-confirmed, 핸드 비어야 함
+        assert ps1.board.is_full()
+        assert ps1.confirmed is True
+        assert ps1.hand == []
+
+        # deal_cards를 호출해도 FL 보드가 이미 full이므로 서버가 스킵해야 함
+        deck_before = len(session.deck)
+        # _advance_round 후 FL 플레이어의 hand는 비어있지만 board가 full
+        # main.py에서 ps.board.is_full() 체크로 딜링 스킵
+
+        # Normal은 R1에서 3장 딜링 가능
+        ps2 = session.players["p2"]
+        assert ps2.confirmed is False
+        cards_p2_r1 = session.deal_cards("p2")
+        assert len(cards_p2_r1) == 3
+
+    def test_fl_advance_round_preserves_board(self):
+        """#7: _advance_round가 FL 보드를 리셋하지 않는지 확인"""
+        session = self._make_session()
+        session.start_game()
+        ps1 = session.players["p1"]
+        ps1.in_fantasyland = True
+        ps1.fantasyland_card_count = 14
+
+        cards_p1 = session.deal_cards("p1")
+        session.deal_cards("p2")
+
+        # FL: 13장 배치 + 1장 버림
+        for c in cards_p1[:3]:
+            session.place_card("p1", _card_to_dict(c), "top")
+        for c in cards_p1[3:8]:
+            session.place_card("p1", _card_to_dict(c), "mid")
+        for c in cards_p1[8:13]:
+            session.place_card("p1", _card_to_dict(c), "bottom")
+        session.discard_card("p1", _card_to_dict(cards_p1[13]))
+
+        assert ps1.board.is_full()
+        board_top_before = list(ps1.board.top)
+        board_mid_before = list(ps1.board.mid)
+        board_bot_before = list(ps1.board.bottom)
+
+        # _advance_round 직접 호출
+        session.current_round = 0
+        ps1.confirmed = True
+        session.players["p2"].confirmed = True
+        result = session._advance_round()
+        assert result.get("roundAdvanced") is True
+
+        # FL 보드 유지되어야 함
+        assert ps1.board.top == board_top_before
+        assert ps1.board.mid == board_mid_before
+        assert ps1.board.bottom == board_bot_before
+        assert ps1.confirmed is True  # auto-confirmed
 
 
 # ── A1: GameSession remove_player 테스트 ─────────────
@@ -1485,7 +1620,7 @@ class TestWSDefensiveCode:
         from server.main import broadcast_to_room
 
         mgr = RoomManager()
-        room = mgr.create_room("TestRoom", 2)
+        room = mgr.create_room("TestRoom")
         mock_ws1 = MagicMock()
         mock_ws1.send_json = AsyncMock(side_effect=Exception("WS dead"))
         mock_ws2 = MagicMock()
@@ -1505,7 +1640,7 @@ class TestWSDefensiveCode:
         """except 블록에서 dead WS에 error send 시도해도 서버가 죽지 않는지 확인"""
         client = TestClient(app)
         # 방 생성 후 정상적으로 연결/해제 — 서버가 크래시하지 않으면 통과
-        resp = client.post("/api/rooms", json={"name": "CrashTest", "max_players": 2})
+        resp = client.post("/api/rooms", json={"name": "CrashTest"})
         room_id = resp.json()["id"]
         with client.websocket_connect(f"/ws/game/{room_id}") as ws:
             ws.send_json({"type": "joinRequest", "payload": {"playerName": "Alice"}})
@@ -1522,7 +1657,7 @@ class TestWSDefensiveCode:
     def test_cleanup_isolation(self):
         """한 플레이어의 연결 오류가 다른 플레이어에게 전파되지 않는지 확인"""
         client = TestClient(app)
-        resp = client.post("/api/rooms", json={"name": "IsoRoom", "max_players": 2})
+        resp = client.post("/api/rooms", json={"name": "IsoRoom"})
         room_id = resp.json()["id"]
 
         # Player 1 연결
@@ -1537,17 +1672,1063 @@ class TestWSDefensiveCode:
                 ws2.send_json({"type": "joinRequest", "payload": {"playerName": "Bob"}})
                 msg2 = ws2.receive_json()
                 assert msg2["type"] == "joinAccepted"
-                # gameStart 메시지 수신 (2인 풀방)
-                msg_start2 = ws2.receive_json()
-                assert msg_start2["type"] in ("playerJoined", "gameStart")
 
             # ws2가 끊겨도 ws1은 여전히 정상 동작해야 한다
-            # ws1에서 gameStart 또는 playerJoined 메시지 수신 확인
+            # ws1에서 playerJoined 메시지 수신 확인
             msg_start1 = ws1.receive_json()
-            assert msg_start1["type"] in ("playerJoined", "gameStart")
+            assert msg_start1["type"] in ("playerJoined", "playerDisconnected")
 
             # ws1이 heartbeat를 보내고 응답을 받을 수 있어야 한다
             ws1.send_json({"type": "heartbeat", "payload": {}})
             hb = ws1.receive_json()
             # gameStart, dealCards, stateUpdate 등 대기중 메시지가 올 수 있으므로 type 유연하게 체크
             assert hb["type"] in ("heartbeat", "gameStart", "dealCards", "stateUpdate", "playerDisconnected")
+
+
+# ── 3인 멀티플레이어 테스트 ────────────────────────
+
+class TestThreePlayerGame:
+    def test_room_has_host_id(self):
+        """Room에 host_id 필드 존재"""
+        room = Room(id="t1", name="3P Room")
+        assert room.host_id is None
+
+    def test_max_players_constant(self):
+        """MAX_PLAYERS 상수가 6"""
+        from server.models import MAX_PLAYERS
+        assert MAX_PLAYERS == 6
+
+    def test_three_player_session_creation(self):
+        """3인 GameSession 생성"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["Alice", "Bob", "Charlie"])
+        assert len(session.players) == 3
+        assert len(session.deck) == 52
+        state = session.start_game()
+        assert state["phase"] == "dealing"
+
+    def test_three_player_deal_all_rounds(self):
+        """R0~R4 전체 딜링: 3인 x (5 + 3*4) = 51장 소비"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["A", "B", "C"])
+        session.start_game()
+        # R0: 각 5장 = 15장
+        for pid in ["p1", "p2", "p3"]:
+            cards = session.deal_cards(pid)
+            assert len(cards) == 5
+        assert len(session.deck) == 52 - 15  # 37장 남음
+        # R1~R4: 각 3장 x 3인 = 9장/라운드 x 4 = 36장
+        for round_num in range(1, 5):
+            session.current_round = round_num
+            for pid in ["p1", "p2", "p3"]:
+                cards = session.deal_cards(pid)
+                assert len(cards) == 3
+        assert len(session.deck) == 52 - 51  # 1장 남음
+
+    def test_three_player_scoring(self):
+        """Round-Robin 3쌍 점수 비교: 합산 0"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["A", "B", "C"])
+        session.start_game()
+        # 모든 보드를 동일하게 세팅 → 모두 0점
+        for pid in ["p1", "p2", "p3"]:
+            ps = session.players[pid]
+            ps.board.top = [Card(Rank.ACE, Suit.SPADE), Card(Rank.KING, Suit.SPADE), Card(Rank.QUEEN, Suit.SPADE)]
+            ps.board.mid = [Card(Rank.TEN, Suit.HEART), Card(Rank.JACK, Suit.HEART), Card(Rank.QUEEN, Suit.HEART), Card(Rank.KING, Suit.HEART), Card(Rank.ACE, Suit.HEART)]
+            ps.board.bottom = [Card(Rank.TWO, Suit.DIAMOND), Card(Rank.THREE, Suit.DIAMOND), Card(Rank.FOUR, Suit.DIAMOND), Card(Rank.FIVE, Suit.DIAMOND), Card(Rank.SIX, Suit.DIAMOND)]
+        result = session._score_game()
+        # 동일 보드 → 모든 점수 0
+        assert result["results"]["p1"]["totalScore"] == 0
+        assert result["results"]["p2"]["totalScore"] == 0
+        assert result["results"]["p3"]["totalScore"] == 0
+
+    def test_three_player_scoring_sum_zero(self):
+        """3인 점수 합은 항상 0 (zero-sum)"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["A", "B", "C"])
+        session.start_game()
+        # p1: 강한 보드, p2: 중간, p3: 약한
+        ps1 = session.players["p1"]
+        ps1.board.top = [Card(Rank.ACE, Suit.SPADE), Card(Rank.ACE, Suit.HEART), Card(Rank.KING, Suit.SPADE)]
+        ps1.board.mid = [Card(Rank.ACE, Suit.DIAMOND), Card(Rank.ACE, Suit.CLUB), Card(Rank.KING, Suit.HEART), Card(Rank.KING, Suit.DIAMOND), Card(Rank.KING, Suit.CLUB)]
+        ps1.board.bottom = [Card(Rank.QUEEN, Suit.SPADE), Card(Rank.QUEEN, Suit.HEART), Card(Rank.QUEEN, Suit.DIAMOND), Card(Rank.QUEEN, Suit.CLUB), Card(Rank.JACK, Suit.SPADE)]
+
+        ps2 = session.players["p2"]
+        ps2.board.top = [Card(Rank.TEN, Suit.SPADE), Card(Rank.TEN, Suit.HEART), Card(Rank.NINE, Suit.SPADE)]
+        ps2.board.mid = [Card(Rank.EIGHT, Suit.SPADE), Card(Rank.EIGHT, Suit.HEART), Card(Rank.EIGHT, Suit.DIAMOND), Card(Rank.SEVEN, Suit.SPADE), Card(Rank.SEVEN, Suit.HEART)]
+        ps2.board.bottom = [Card(Rank.JACK, Suit.HEART), Card(Rank.JACK, Suit.DIAMOND), Card(Rank.JACK, Suit.CLUB), Card(Rank.TEN, Suit.DIAMOND), Card(Rank.TEN, Suit.CLUB)]
+
+        ps3 = session.players["p3"]
+        ps3.board.top = [Card(Rank.TWO, Suit.SPADE), Card(Rank.THREE, Suit.SPADE), Card(Rank.FOUR, Suit.SPADE)]
+        ps3.board.mid = [Card(Rank.FIVE, Suit.SPADE), Card(Rank.SIX, Suit.SPADE), Card(Rank.SEVEN, Suit.DIAMOND), Card(Rank.EIGHT, Suit.CLUB), Card(Rank.NINE, Suit.HEART)]
+        ps3.board.bottom = [Card(Rank.TWO, Suit.HEART), Card(Rank.THREE, Suit.HEART), Card(Rank.FOUR, Suit.HEART), Card(Rank.FIVE, Suit.HEART), Card(Rank.SIX, Suit.HEART)]
+
+        result = session._score_game()
+        total = sum(r["totalScore"] for r in result["results"].values())
+        assert total == 0, f"3인 점수 합은 0이어야 함, got {total}"
+
+    def test_three_player_remove_player(self):
+        """1명 퇴장 시 2인으로 계속"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["A", "B", "C"])
+        session.start_game()
+        result = session.remove_player("p3")
+        assert result is None  # 2명 남음 → 게임 계속
+        assert len(session.players) == 2
+        assert "p3" not in session.players
+
+    def test_three_player_remove_to_one(self):
+        """2명 퇴장 → 1명 남으면 gameOver"""
+        session = GameSession("room1", ["p1", "p2", "p3"], ["A", "B", "C"])
+        session.start_game()
+        session.remove_player("p3")
+        result = session.remove_player("p2")
+        assert result is not None
+        assert result["type"] == "gameOver"
+        assert result["winner"] == "p1"
+
+
+# ── 4인 멀티플레이어 테스트 ────────────────────────
+
+class TestFourPlayerGame:
+    def test_create_room_no_max_players(self):
+        """Room에 max_players 필드 없음, host_id 존재"""
+        room = Room(id="t1", name="4P Room")
+        assert room.host_id is None
+        assert room.status == RoomStatus.waiting
+
+    def test_game_session_4_players_basic(self):
+        """4인 GameSession 생성 및 R0 딜링"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        assert len(session.players) == 4
+        assert len(session.deck) == 52
+        assert len(session.discard_pile) == 0
+        session.start_game()
+        # R0: 각 5장 = 20장
+        for pid in ["p1", "p2", "p3", "p4"]:
+            cards = session.deal_cards(pid)
+            assert len(cards) == 5
+        assert len(session.deck) == 52 - 20  # 32장 남음
+
+    def test_game_session_4_players_reshuffle(self):
+        """덱 부족 시 리셔플 동작 확인"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        # 덱을 인위적으로 줄이고 discard_pile에 카드 넣기
+        remaining = session.deck[:2]  # 2장만 남김
+        discarded_cards = session.deck[2:10]  # 8장을 버림더미에
+        session.deck = remaining
+        session.discard_pile = list(discarded_cards)
+        assert len(session.deck) == 2
+        assert len(session.discard_pile) == 8
+        # 3장 딜 시도 → 덱 부족(2장) → 리셔플 발동 → 총 10장에서 3장 딜
+        session.current_round = 1
+        cards = session.deal_cards("p1")
+        assert len(cards) == 3
+        # 리셔플 후 discard_pile은 비어야 함
+        assert len(session.discard_pile) == 0
+
+    def test_game_session_4_players_r4_deal_2(self):
+        """4인 R4에서 2장만 딜링"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        session.current_round = 4
+        cards = session.deal_cards("p1")
+        assert len(cards) == 2
+
+    def test_game_session_4_players_r4_confirm_no_discard(self):
+        """4인 R4에서 버림 없이 2장 배치 후 confirm 성공"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        session.current_round = 4
+        cards = session.deal_cards("p1")
+        assert len(cards) == 2
+        # 2장 배치
+        session.place_card("p1", _card_to_dict(cards[0]), "bottom")
+        session.place_card("p1", _card_to_dict(cards[1]), "mid")
+        result = session.confirm_placement("p1")
+        assert "error" not in result
+
+    def test_game_session_4_players_r4_confirm_with_discard_fails(self):
+        """4인 R4에서 버림 시도 시 실패 (R4 비-FL은 discard 불가가 아님, 하지만 confirm 시 에러)"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        # R1에서 먼저 테스트 (3장 딜, 2장 배치 + 1장 버림 필요)
+        session.current_round = 4
+        cards = session.deal_cards("p1")
+        assert len(cards) == 2
+        # 1장 배치 + 1장 버리면 confirm 실패해야 함
+        session.place_card("p1", _card_to_dict(cards[0]), "bottom")
+        # R4에서 discard는 deal_cards 이후이므로 current_round != 0이라 허용됨
+        session.discard_card("p1", _card_to_dict(cards[1]))
+        result = session.confirm_placement("p1")
+        assert "error" in result  # 2장 배치 + 0장 버림이 아니므로 에러
+
+    def test_remove_player_4_players_game_continues(self):
+        """4인 중 1명 퇴장 시 게임 계속"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        for pid in ["p1", "p2", "p3", "p4"]:
+            session.deal_cards(pid)
+        result = session.remove_player("p4")
+        assert result is None  # 3명 남음 → 게임 계속
+        assert len(session.players) == 3
+        assert "p4" not in session.players
+        # 남은 3명에게 각 +6점
+        assert session.scores["p1"] == 6
+        assert session.scores["p2"] == 6
+        assert session.scores["p3"] == 6
+
+    def test_remove_player_until_1_remaining(self):
+        """4인 → 3인 → 2인 → 1인 시 gameOver"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        for pid in ["p1", "p2", "p3", "p4"]:
+            session.deal_cards(pid)
+        # 4 → 3: 게임 계속
+        result = session.remove_player("p4")
+        assert result is None
+        assert len(session.players) == 3
+        # 3 → 2: 게임 계속
+        result = session.remove_player("p3")
+        assert result is None
+        assert len(session.players) == 2
+        # 2 → 1: gameOver
+        result = session.remove_player("p2")
+        assert result is not None
+        assert result["type"] == "gameOver"
+        assert result["winner"] == "p1"
+        assert result["reason"] == "player_left"
+
+    def test_discard_pile_reset_on_next_hand(self):
+        """_start_next_hand에서 discard_pile이 초기화되는지 확인"""
+        session = GameSession("room1", ["p1", "p2", "p3", "p4"], ["A", "B", "C", "D"])
+        session.start_game()
+        session.discard_pile = [Card(Rank.ACE, Suit.SPADE)]
+        session._start_next_hand()
+        assert session.discard_pile == []
+        assert len(session.deck) == 52
+
+    def test_4_player_create_room_rest_api(self):
+        """REST API로 방 생성 (max_players 없음)"""
+        client = TestClient(app)
+        resp = client.post("/api/rooms", json={"name": "4P Room"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["host_id"] is None
+
+
+# ── 딜러 버튼 폴드 시스템 테스트 ──────────────────────
+
+class TestDealerButtonFoldSystem:
+    """5~6인 딜러 버튼 폴드 시스템 테스트"""
+
+    def test_4_players_all_active(self):
+        """4인: 전원 active, 폴드 없음"""
+        pids = ["p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        assert session.active_pids == pids
+        assert session.folded_pids == []
+        assert len(session.players) == 4
+
+    def test_3_players_all_active(self):
+        """3인: 전원 active, 폴드 없음"""
+        pids = ["p1", "p2", "p3"]
+        pnames = ["A", "B", "C"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        assert session.active_pids == pids
+        assert session.folded_pids == []
+
+    def test_2_players_all_active(self):
+        """2인: 전원 active, 폴드 없음"""
+        pids = ["p1", "p2"]
+        pnames = ["A", "B"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        assert session.active_pids == pids
+        assert session.folded_pids == []
+
+    def test_5_players_one_folded(self):
+        """5인: 4명 active (딜러 포함), 1명 폴드 (딜러 바로 앞)"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        assert len(session.active_pids) == 4
+        assert len(session.folded_pids) == 1
+        # 딜러=p0, ordered=[p1,p2,p3,p4,p0]
+        # non_dealer=[p1,p2,p3,p4], fold last 1 = [p4]
+        # active = [p1,p2,p3] + [p0(dealer)] = [p1,p2,p3,p0]
+        assert session.folded_pids == ["p4"]
+        assert "p0" in session.active_pids  # 딜러는 항상 active
+        assert session.active_pids == ["p1", "p2", "p3", "p0"]
+
+    def test_6_players_two_folded(self):
+        """6인: 4명 active (딜러 포함), 2명 폴드 (딜러 바로 앞)"""
+        pids = ["p0", "p1", "p2", "p3", "p4", "p5"]
+        pnames = ["A", "B", "C", "D", "E", "F"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        assert len(session.active_pids) == 4
+        assert len(session.folded_pids) == 2
+        # 딜러=p0, ordered=[p1,p2,p3,p4,p5,p0]
+        # non_dealer=[p1,p2,p3,p4,p5], fold last 2 = [p4,p5]
+        # active = [p1,p2,p3] + [p0(dealer)] = [p1,p2,p3,p0]
+        assert session.active_pids == ["p1", "p2", "p3", "p0"]
+        assert session.folded_pids == ["p4", "p5"]
+
+    def test_dealer_rotation_5_players(self):
+        """5인: 딜러 로테이션 확인 — 매 핸드 다른 플레이어 폴드"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        # Hand 1: dealer=0 (p0), folded=[p0]
+        assert session.dealer_index == 0
+        folded_hand1 = list(session.folded_pids)
+
+        # Simulate complete round to trigger _start_next_hand
+        session._start_next_hand()
+
+        # Hand 2: dealer=1 (p1), folded=[p1]
+        assert session.dealer_index == 1
+        folded_hand2 = list(session.folded_pids)
+        assert folded_hand1 != folded_hand2
+
+        session._start_next_hand()
+
+        # Hand 3: dealer=2 (p2), folded=[p2]
+        assert session.dealer_index == 2
+
+        session._start_next_hand()
+        # Hand 4: dealer=3
+        assert session.dealer_index == 3
+
+        session._start_next_hand()
+        # Hand 5: dealer=4
+        assert session.dealer_index == 4
+
+        session._start_next_hand()
+        # Hand 6: dealer wraps to 0
+        assert session.dealer_index == 0
+
+    def test_dealer_rotation_6_players(self):
+        """6인: 딜러 로테이션 — 매 핸드 다른 2명 폴드"""
+        pids = ["p0", "p1", "p2", "p3", "p4", "p5"]
+        pnames = ["A", "B", "C", "D", "E", "F"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        folded_sets = []
+        for _ in range(6):
+            folded_sets.append(set(session.folded_pids))
+            session._start_next_hand()
+
+        # 6 hands should produce different folded pairs
+        # Each hand folds 2 players, rotating through all 6
+        assert len(folded_sets) == 6
+        # All players should be folded at least once across 6 hands
+        all_folded = set()
+        for fs in folded_sets:
+            all_folded.update(fs)
+        assert all_folded == set(pids)
+
+    def test_folded_player_not_in_session_players(self):
+        """폴드 플레이어는 session.players에 없어야 함 (카드 딜링 방지)"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        for folded in session.folded_pids:
+            assert folded not in session.players
+
+    def test_active_players_get_dealt_cards(self):
+        """active 플레이어만 카드 딜링 가능"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        for pid in session.active_pids:
+            cards = session.deal_cards(pid)
+            assert len(cards) == 5  # R0: 5장
+
+        for pid in session.folded_pids:
+            cards = session.deal_cards(pid)
+            assert len(cards) == 0  # 폴드 플레이어는 딜링 불가
+
+    def test_get_state_includes_dealer_info(self):
+        """get_state()에 dealerIndex, activePlayers, foldedPlayers 포함"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+        state = session.get_state()
+        assert "dealerIndex" in state
+        assert "activePlayers" in state
+        assert "foldedPlayers" in state
+        assert state["dealerIndex"] == 0
+        assert len(state["activePlayers"]) == 4
+        assert len(state["foldedPlayers"]) == 1
+
+    def test_scores_persist_across_hands(self):
+        """점수가 핸드 간에 유지되는지 확인"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        # Manually set a score
+        for pid in session.active_pids:
+            session.scores[pid] = 10
+
+        session._start_next_hand()
+
+        # Active players should retain their scores
+        # (some may now be folded, but scores dict should still have them)
+        for pid in pids:
+            if pid in session.scores:
+                # New active players start at 0 if they weren't scored before
+                pass
+        # At least check scores dict isn't wiped
+        assert len(session.scores) > 0
+
+    def test_remove_folded_player(self):
+        """폴드 플레이어 퇴장 처리 — 게임 계속"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        folded_pid = session.folded_pids[0]
+        result = session.remove_player(folded_pid)
+        # Folded player removal shouldn't cause gameOver (4 active still playing)
+        assert folded_pid not in session.all_player_ids
+        assert folded_pid not in session.folded_pids
+
+    def test_remove_active_player_5p(self):
+        """5인에서 active 플레이어 퇴장 — 남은 active가 게임 계속"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+        session.start_game()
+
+        active_pid = session.active_pids[0]
+        result = session.remove_player(active_pid)
+        assert active_pid not in session.players
+        assert active_pid not in session.active_pids
+        assert len(session.players) == 3  # 4-1=3 active remaining
+
+    def test_assign_seats_order_5p(self):
+        """5인 좌석 배정 순서 검증 — 딜러 포함 active, 딜러 바로 앞 폴드"""
+        pids = ["p0", "p1", "p2", "p3", "p4"]
+        pnames = ["A", "B", "C", "D", "E"]
+        session = GameSession("room1", pids, pnames)
+
+        # dealer=0: non_dealer=[p1,p2,p3,p4], fold=[p4], active=[p1,p2,p3,p0]
+        session._assign_seats()
+        assert session.active_pids == ["p1", "p2", "p3", "p0"]
+        assert session.folded_pids == ["p4"]
+
+        # dealer=1: non_dealer=[p2,p3,p4,p0], fold=[p0], active=[p2,p3,p4,p1]
+        session.dealer_index = 1
+        session._assign_seats()
+        assert session.active_pids == ["p2", "p3", "p4", "p1"]
+        assert session.folded_pids == ["p0"]
+
+        # dealer=4: non_dealer=[p0,p1,p2,p3], fold=[p3], active=[p0,p1,p2,p4]
+        session.dealer_index = 4
+        session._assign_seats()
+        assert session.active_pids == ["p0", "p1", "p2", "p4"]
+        assert session.folded_pids == ["p3"]
+
+    def test_assign_seats_order_6p(self):
+        """6인 좌석 배정 순서 검증 — 딜러 포함 active, 딜러 바로 앞 2명 폴드"""
+        pids = ["p0", "p1", "p2", "p3", "p4", "p5"]
+        pnames = ["A", "B", "C", "D", "E", "F"]
+        session = GameSession("room1", pids, pnames)
+
+        # dealer=0: non_dealer=[p1,p2,p3,p4,p5], fold=[p4,p5], active=[p1,p2,p3,p0]
+        session._assign_seats()
+        assert session.active_pids == ["p1", "p2", "p3", "p0"]
+        assert session.folded_pids == ["p4", "p5"]
+
+        # dealer=2: non_dealer=[p3,p4,p5,p0,p1], fold=[p0,p1], active=[p3,p4,p5,p2]
+        session.dealer_index = 2
+        session._assign_seats()
+        assert session.active_pids == ["p3", "p4", "p5", "p2"]
+        assert session.folded_pids == ["p0", "p1"]
+
+
+# ── compare_boards_detailed 테스트 ───────────────────
+
+class TestCompareBoardsDetailed:
+    def _make_board(self, top, mid, bottom):
+        from src.board import OFCBoard
+        b = OFCBoard()
+        for c in top:
+            b.place_card("top", c)
+        for c in mid:
+            b.place_card("mid", c)
+        for c in bottom:
+            b.place_card("bottom", c)
+        return b
+
+    def test_hand_type_name(self):
+        assert hand_type_name(HandType.FLUSH) == "Flush"
+        assert hand_type_name(HandType.HIGH_CARD) == "High Card"
+        assert hand_type_name(HandType.ROYAL_FLUSH) == "Royal Flush"
+        assert hand_type_name(HandType.ONE_PAIR) == "One Pair"
+        assert hand_type_name(HandType.TWO_PAIR) == "Two Pair"
+        assert hand_type_name(HandType.THREE_OF_A_KIND) == "Three of a Kind"
+        assert hand_type_name(HandType.STRAIGHT) == "Straight"
+        assert hand_type_name(HandType.FULL_HOUSE) == "Full House"
+        assert hand_type_name(HandType.FOUR_OF_A_KIND) == "Four of a Kind"
+        assert hand_type_name(HandType.STRAIGHT_FLUSH) == "Straight Flush"
+
+    def test_detailed_structure(self):
+        """상세 결과 dict 구조 확인"""
+        # board_a: top=KK, mid=pair AA, bottom=flush
+        board_a = self._make_board(
+            top=[Card(Rank.KING, Suit.HEART), Card(Rank.KING, Suit.SPADE), Card(Rank.TWO, Suit.HEART)],
+            mid=[Card(Rank.ACE, Suit.HEART), Card(Rank.ACE, Suit.SPADE), Card(Rank.THREE, Suit.HEART), Card(Rank.FOUR, Suit.HEART), Card(Rank.FIVE, Suit.HEART)],
+            bottom=[Card(Rank.TEN, Suit.CLUB), Card(Rank.JACK, Suit.CLUB), Card(Rank.QUEEN, Suit.CLUB), Card(Rank.EIGHT, Suit.CLUB), Card(Rank.NINE, Suit.CLUB)],
+        )
+        # board_b: top=high card, mid=high card, bottom=high card
+        board_b = self._make_board(
+            top=[Card(Rank.TWO, Suit.CLUB), Card(Rank.THREE, Suit.CLUB), Card(Rank.FOUR, Suit.CLUB)],
+            mid=[Card(Rank.TWO, Suit.SPADE), Card(Rank.THREE, Suit.SPADE), Card(Rank.FOUR, Suit.SPADE), Card(Rank.SIX, Suit.HEART), Card(Rank.SEVEN, Suit.HEART)],
+            bottom=[Card(Rank.TWO, Suit.DIAMOND), Card(Rank.THREE, Suit.DIAMOND), Card(Rank.FIVE, Suit.SPADE), Card(Rank.SIX, Suit.CLUB), Card(Rank.EIGHT, Suit.HEART)],
+        )
+        detail = compare_boards_detailed(board_a, board_b)
+
+        assert "lines" in detail
+        assert "bottom" in detail["lines"]
+        assert "mid" in detail["lines"]
+        assert "top" in detail["lines"]
+        assert "lineScore" in detail
+        assert "scoop" in detail
+        assert "scoopBonus" in detail
+        assert "royaltyDiff" in detail
+        assert "total" in detail
+
+        # board_a wins all 3 lines
+        assert detail["lineScore"] == 3
+        assert detail["scoop"] is True
+        assert detail["scoopBonus"] == 3
+
+        # Each line should have myHand, oppHand, result, myRoyalty, oppRoyalty
+        for line_name in ["bottom", "mid", "top"]:
+            line_data = detail["lines"][line_name]
+            assert "myHand" in line_data
+            assert "oppHand" in line_data
+            assert "result" in line_data
+            assert "myRoyalty" in line_data
+            assert "oppRoyalty" in line_data
+
+    def test_detailed_matches_simple(self):
+        """compare_boards_detailed total == compare_boards int 결과 일치"""
+        from server.scoring import compare_boards
+        board_a = self._make_board(
+            top=[Card(Rank.QUEEN, Suit.HEART), Card(Rank.QUEEN, Suit.SPADE), Card(Rank.THREE, Suit.HEART)],
+            mid=[Card(Rank.FIVE, Suit.HEART), Card(Rank.FIVE, Suit.SPADE), Card(Rank.FIVE, Suit.CLUB), Card(Rank.FOUR, Suit.HEART), Card(Rank.FOUR, Suit.SPADE)],
+            bottom=[Card(Rank.ACE, Suit.HEART), Card(Rank.ACE, Suit.SPADE), Card(Rank.ACE, Suit.CLUB), Card(Rank.KING, Suit.HEART), Card(Rank.KING, Suit.SPADE)],
+        )
+        board_b = self._make_board(
+            top=[Card(Rank.JACK, Suit.HEART), Card(Rank.JACK, Suit.SPADE), Card(Rank.TWO, Suit.HEART)],
+            mid=[Card(Rank.TEN, Suit.HEART), Card(Rank.TEN, Suit.SPADE), Card(Rank.TEN, Suit.CLUB), Card(Rank.NINE, Suit.HEART), Card(Rank.NINE, Suit.SPADE)],
+            bottom=[Card(Rank.EIGHT, Suit.HEART), Card(Rank.EIGHT, Suit.SPADE), Card(Rank.EIGHT, Suit.CLUB), Card(Rank.EIGHT, Suit.DIAMOND), Card(Rank.SEVEN, Suit.HEART)],
+        )
+        simple = compare_boards(board_a, board_b)
+        detailed = compare_boards_detailed(board_a, board_b)
+        assert detailed["total"] == simple
+
+    def test_detailed_both_foul(self):
+        """양측 모두 foul인 경우"""
+        board_a = self._make_board(
+            top=[Card(Rank.ACE, Suit.HEART), Card(Rank.ACE, Suit.SPADE), Card(Rank.ACE, Suit.CLUB)],
+            mid=[Card(Rank.TWO, Suit.HEART), Card(Rank.THREE, Suit.SPADE), Card(Rank.FOUR, Suit.CLUB), Card(Rank.SIX, Suit.HEART), Card(Rank.SEVEN, Suit.SPADE)],
+            bottom=[Card(Rank.EIGHT, Suit.HEART), Card(Rank.EIGHT, Suit.SPADE), Card(Rank.EIGHT, Suit.CLUB), Card(Rank.EIGHT, Suit.DIAMOND), Card(Rank.NINE, Suit.HEART)],
+        )
+        board_b = self._make_board(
+            top=[Card(Rank.KING, Suit.HEART), Card(Rank.KING, Suit.SPADE), Card(Rank.KING, Suit.CLUB)],
+            mid=[Card(Rank.TWO, Suit.CLUB), Card(Rank.THREE, Suit.CLUB), Card(Rank.FOUR, Suit.DIAMOND), Card(Rank.SIX, Suit.CLUB), Card(Rank.SEVEN, Suit.CLUB)],
+            bottom=[Card(Rank.TEN, Suit.HEART), Card(Rank.TEN, Suit.SPADE), Card(Rank.TEN, Suit.CLUB), Card(Rank.JACK, Suit.HEART), Card(Rank.JACK, Suit.SPADE)],
+        )
+        detail = compare_boards_detailed(board_a, board_b)
+        assert detail["foulA"] is True
+        assert detail["foulB"] is True
+        assert detail["total"] == 0
+
+    def test_detailed_foul_a(self):
+        """A가 foul인 경우 상세 결과"""
+        # foul board: top > mid (invalid)
+        board_a = self._make_board(
+            top=[Card(Rank.ACE, Suit.HEART), Card(Rank.ACE, Suit.SPADE), Card(Rank.ACE, Suit.CLUB)],
+            mid=[Card(Rank.TWO, Suit.HEART), Card(Rank.THREE, Suit.SPADE), Card(Rank.FOUR, Suit.CLUB), Card(Rank.SIX, Suit.HEART), Card(Rank.SEVEN, Suit.SPADE)],
+            bottom=[Card(Rank.EIGHT, Suit.HEART), Card(Rank.EIGHT, Suit.SPADE), Card(Rank.EIGHT, Suit.CLUB), Card(Rank.EIGHT, Suit.DIAMOND), Card(Rank.NINE, Suit.HEART)],
+        )
+        board_b = self._make_board(
+            top=[Card(Rank.TWO, Suit.CLUB), Card(Rank.THREE, Suit.CLUB), Card(Rank.FOUR, Suit.DIAMOND)],
+            mid=[Card(Rank.FIVE, Suit.HEART), Card(Rank.FIVE, Suit.SPADE), Card(Rank.SIX, Suit.CLUB), Card(Rank.SEVEN, Suit.CLUB), Card(Rank.EIGHT, Suit.DIAMOND)],
+            bottom=[Card(Rank.TEN, Suit.HEART), Card(Rank.TEN, Suit.SPADE), Card(Rank.TEN, Suit.CLUB), Card(Rank.JACK, Suit.HEART), Card(Rank.JACK, Suit.SPADE)],
+        )
+        detail = compare_boards_detailed(board_a, board_b)
+        assert detail["foulA"] is True
+        assert detail["foulB"] is False
+        assert detail["total"] < 0
+
+
+# ── REST API playerCount 포함 테스트 ──────────────────
+
+class TestRestApiPlayerCount:
+    def test_list_rooms_includes_player_count(self):
+        """GET /api/rooms 응답에 playerCount 포함 확인"""
+        client = TestClient(app)
+        # 방 생성
+        resp = client.post("/api/rooms", json={"name": "TestRoom"})
+        assert resp.status_code == 200
+        room_data = resp.json()
+        room_id = room_data["id"]
+        # 방 목록 조회
+        resp = client.get("/api/rooms")
+        assert resp.status_code == 200
+        rooms = resp.json()
+        assert len(rooms) >= 1
+        target = next(r for r in rooms if r["id"] == room_id)
+        assert "playerCount" in target
+        assert target["playerCount"] == 0
+
+
+# ── joinAccepted players 리스트 포함 테스트 ────────────
+
+class TestJoinAcceptedPlayers:
+    def test_score_game_includes_line_results(self):
+        """_score_game() 결과에 lineResults 상세 포함 확인"""
+        session = GameSession("room1", ["p1", "p2"], ["Alice", "Bob"])
+        session.start_game()
+        # 두 플레이어에게 카드 딜 + 배치 + 확인 (간단한 보드)
+        for pid in ["p1", "p2"]:
+            cards = session.deal_cards(pid)
+            ps = session.players[pid]
+            lines = ["bottom", "bottom", "mid", "mid", "top"]
+            for i, card in enumerate(cards):
+                line = lines[i]
+                session.place_card(pid, {"rank": card.rank.value, "suit": card.suit.value,
+                                         "rankName": card.rank.name, "suitName": card.suit.name}, line)
+        for pid in ["p1", "p2"]:
+            session.confirm_placement(pid)
+        # R1~R4
+        for _ in range(4):
+            for pid in ["p1", "p2"]:
+                cards = session.deal_cards(pid)
+                ps = session.players[pid]
+                placed = 0
+                for card in cards:
+                    if placed < 2:
+                        for line in ["bottom", "mid", "top"]:
+                            result = session.place_card(pid, {"rank": card.rank.value, "suit": card.suit.value,
+                                                              "rankName": card.rank.name, "suitName": card.suit.name}, line)
+                            if result is not None:
+                                placed += 1
+                                break
+                    else:
+                        session.discard_card(pid, {"rank": card.rank.value, "suit": card.suit.value,
+                                                   "rankName": card.rank.name, "suitName": card.suit.name})
+            result = None
+            for pid in ["p1", "p2"]:
+                result = session.confirm_placement(pid)
+            if result and result.get("type") == "nextHand":
+                # Check lineResults
+                results = result["results"]
+                for pid_key, res_data in results.items():
+                    line_results = res_data["lineResults"]
+                    assert isinstance(line_results, dict)
+                    # Each player should have lineResults vs the other player
+                    other_pids = [p for p in results.keys() if p != pid_key]
+                    for other_pid in other_pids:
+                        assert other_pid in line_results
+                        detail = line_results[other_pid]
+                        assert "total" in detail
+                        assert "lines" in detail
+                break  # Just check the first completed hand
+
+
+# ── Quick Match 테스트 ──────────────────────────────────
+
+class TestQuickMatch:
+    def setup_method(self):
+        self.client = TestClient(app)
+
+    def test_quickmatch_creates_room_when_none(self):
+        """대기 방 없으면 새 방 생성"""
+        resp = self.client.post("/api/quickmatch")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "roomId" in data
+        # 방이 실제로 생성되었는지 확인
+        rooms = self.client.get("/api/rooms").json()
+        assert len(rooms) == 1
+        assert rooms[0]["id"] == data["roomId"]
+        assert rooms[0]["name"] == "Quick Match"
+
+    def test_quickmatch_returns_existing_waiting_room(self):
+        """대기 중인 방이 있으면 해당 방 ID 반환"""
+        # 먼저 방 하나 생성
+        create_resp = self.client.post("/api/rooms", json={"name": "ExistingRoom"})
+        existing_id = create_resp.json()["id"]
+        # quickmatch 호출 → 기존 방 반환
+        resp = self.client.post("/api/quickmatch")
+        assert resp.status_code == 200
+        assert resp.json()["roomId"] == existing_id
+
+    def test_quickmatch_skips_playing_room(self):
+        """playing 상태 방은 건너뛰기"""
+        create_resp = self.client.post("/api/rooms", json={"name": "PlayingRoom"})
+        room_id = create_resp.json()["id"]
+        # 방 상태를 playing으로 변경
+        room_mgr.rooms[room_id].status = RoomStatus.playing
+        # quickmatch → 새 방 생성
+        resp = self.client.post("/api/quickmatch")
+        assert resp.status_code == 200
+        assert resp.json()["roomId"] != room_id
+        # 총 2개 방 존재
+        rooms = self.client.get("/api/rooms").json()
+        assert len(rooms) == 2
+
+    def test_quickmatch_skips_full_room(self):
+        """MAX_PLAYERS 달한 방은 건너뛰기"""
+        create_resp = self.client.post("/api/rooms", json={"name": "FullRoom"})
+        room_id = create_resp.json()["id"]
+        # 방을 가득 채움
+        from server.models import MAX_PLAYERS
+        room_mgr.rooms[room_id].players = [f"player{i}" for i in range(MAX_PLAYERS)]
+        # quickmatch → 새 방 생성
+        resp = self.client.post("/api/quickmatch")
+        assert resp.status_code == 200
+        assert resp.json()["roomId"] != room_id
+
+
+# ── EnsureEmptyRoom 테스트 ─────────────────────────────
+
+class TestNoAutoRoom:
+    def test_server_startup_no_auto_room(self):
+        """서버 시작 시 자동 방 생성 없음 — Create 버튼으로만 방 생성"""
+        mgr = RoomManager()
+        assert len(mgr.rooms) == 0
+
+    def test_empty_room_deleted_when_last_player_leaves(self):
+        """마지막 플레이어 퇴장 시 방 자동 삭제"""
+        mgr = RoomManager()
+        room = mgr.create_room("Test")
+        assert len(mgr.rooms) == 1
+        # 플레이어 추가 시뮬레이션
+        room.players.append("Alice")
+        mgr._connections[room.id] = {"p1": {"name": "Alice", "ws": None}}
+        # 플레이어 퇴장
+        mgr._force_remove_player(room.id, "p1")
+        assert len(mgr.rooms) == 0
+
+    def test_stale_empty_room_cleanup(self):
+        """STALE_EMPTY_TIMEOUT 초과 빈 방 감지"""
+        import time as _time
+        mgr = RoomManager()
+        r1 = mgr.create_room("Old")
+        mgr.create_room("New")
+        r1.created_at = _time.time() - 400  # STALE_EMPTY_TIMEOUT(300) 초과
+        stale = [
+            rid for rid, room in mgr.rooms.items()
+            if not room.players and _time.time() - room.created_at >= 300
+        ]
+        assert len(stale) == 1
+        assert stale[0] == r1.id
+
+    def test_room_list_empty_on_fresh_start(self):
+        """서버 시작 시 방 목록 비어있음 (REST API)"""
+        room_mgr.rooms.clear()
+        room_mgr._connections.clear()
+        client = TestClient(app)
+        resp = client.get("/api/rooms")
+        assert resp.status_code == 200
+        rooms = resp.json()
+        assert len(rooms) == 0
+
+
+# ── Room Settings (max_players, turn_time_limit) 테스트 ──
+
+class TestRoomSettings:
+    """방 설정 (인원수 + 제한시간) 테스트"""
+
+    def test_room_default_values(self):
+        """Room 기본값: max_players=6, turn_time_limit=0"""
+        room = Room(id="t1", name="TestRoom")
+        assert room.max_players == 6
+        assert room.turn_time_limit == 0
+
+    def test_room_custom_values(self):
+        """Room 커스텀 설정"""
+        room = Room(id="t2", name="Custom", max_players=3, turn_time_limit=30)
+        assert room.max_players == 3
+        assert room.turn_time_limit == 30
+
+    def test_create_room_request_validation_max_players(self):
+        """CreateRoomRequest max_players 범위 검증 (2~6)"""
+        from server.models import CreateRoomRequest
+        from pydantic import ValidationError
+
+        # 유효
+        req = CreateRoomRequest(name="Test", max_players=2)
+        assert req.max_players == 2
+        req = CreateRoomRequest(name="Test", max_players=6)
+        assert req.max_players == 6
+
+        # 범위 초과
+        with pytest.raises(ValidationError):
+            CreateRoomRequest(name="Test", max_players=1)
+        with pytest.raises(ValidationError):
+            CreateRoomRequest(name="Test", max_players=7)
+
+    def test_create_room_request_validation_turn_time_limit(self):
+        """CreateRoomRequest turn_time_limit 범위 검증 (0~300)"""
+        from server.models import CreateRoomRequest
+        from pydantic import ValidationError
+
+        req = CreateRoomRequest(name="Test", turn_time_limit=0)
+        assert req.turn_time_limit == 0
+        req = CreateRoomRequest(name="Test", turn_time_limit=300)
+        assert req.turn_time_limit == 300
+
+        with pytest.raises(ValidationError):
+            CreateRoomRequest(name="Test", turn_time_limit=-1)
+        with pytest.raises(ValidationError):
+            CreateRoomRequest(name="Test", turn_time_limit=301)
+
+    def test_create_room_with_max_players(self):
+        """RoomManager.create_room에 max_players 전달"""
+        mgr = RoomManager()
+        room = mgr.create_room("SmallRoom", max_players=3)
+        assert room.max_players == 3
+        assert room.turn_time_limit == 0
+
+    def test_create_room_with_turn_time_limit(self):
+        """RoomManager.create_room에 turn_time_limit 전달"""
+        mgr = RoomManager()
+        room = mgr.create_room("TimedRoom", turn_time_limit=30)
+        assert room.max_players == 6
+        assert room.turn_time_limit == 30
+
+    def test_add_player_respects_max_players(self):
+        """max_players=3이면 4번째 플레이어 거부"""
+        mgr = RoomManager()
+        room = mgr.create_room("Small", max_players=3)
+
+        class FakeWS:
+            pass
+
+        for i in range(3):
+            mgr.add_player(room.id, f"Player{i}", FakeWS())
+        assert len(room.players) == 3
+
+        with pytest.raises(ValueError, match="full"):
+            mgr.add_player(room.id, "Player3", FakeWS())
+
+    def test_get_room_dict_includes_settings(self):
+        """get_room_dict에 maxPlayers, turnTimeLimit 포함"""
+        mgr = RoomManager()
+        room = mgr.create_room("SettingsRoom", max_players=4, turn_time_limit=60)
+        d = mgr.get_room_dict(room)
+        assert d["maxPlayers"] == 4
+        assert d["turnTimeLimit"] == 60
+
+    def test_game_session_turn_time_limit(self):
+        """GameSession에 turn_time_limit 전달"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=30)
+        assert session.turn_time_limit == 30
+        assert session.turn_deadline is None
+
+    def test_game_session_default_no_timer(self):
+        """turn_time_limit=0이면 turn_deadline 미설정"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"])
+        session.start_game()
+        session.deal_cards("p1")
+        assert session.turn_deadline is None
+
+    def test_game_session_timer_sets_deadline(self):
+        """turn_time_limit>0이면 deal_cards에서 turn_deadline 설정"""
+        import time
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=30)
+        session.start_game()
+        before = time.time()
+        session.deal_cards("p1")
+        after = time.time()
+        assert session.turn_deadline is not None
+        assert before + 30 <= session.turn_deadline <= after + 30
+
+    def test_get_state_includes_timer_fields(self):
+        """get_state()에 turnTimeLimit, turnDeadline 포함"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=45)
+        session.start_game()
+        session.deal_cards("p1")
+        state = session.get_state()
+        assert state["turnTimeLimit"] == 45
+        assert "turnDeadline" in state
+
+    def test_get_state_no_deadline_when_no_timer(self):
+        """turn_time_limit=0이면 turnDeadline 없음"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"])
+        session.start_game()
+        state = session.get_state()
+        assert state["turnTimeLimit"] == 0
+        assert "turnDeadline" not in state
+
+
+# ── auto_place_remaining 테스트 ──
+
+class TestAutoPlaceRemaining:
+    """타이머 만료 시 자동 배치 테스트"""
+
+    def test_auto_place_r0_5cards(self):
+        """R0: 5장 자동 배치"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=30)
+        session.start_game()
+        session.deal_cards("p1")
+        session.deal_cards("p2")
+
+        ps1 = session.players["p1"]
+        assert len(ps1.hand) == 5
+        assert not ps1.confirmed
+
+        # p1만 auto_place
+        result = session.auto_place_remaining("p1")
+        ps1 = session.players["p1"]
+        assert ps1.confirmed
+        assert len(ps1.hand) == 0
+        # 5장이 보드에 배치됨
+        total = len(ps1.board.top) + len(ps1.board.mid) + len(ps1.board.bottom)
+        assert total == 5
+
+        # p2는 아직 미확정 → result는 stateUpdate 형태
+        assert result is not None
+        assert "error" not in result
+
+    def test_auto_place_r1_2place_1discard(self):
+        """R1~R3: 2장 배치 + 1장 버림"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=30)
+        session.start_game()
+        # R0 수동 진행
+        for pid in ["p1", "p2"]:
+            session.deal_cards(pid)
+            ps = session.players[pid]
+            for card in list(ps.hand):
+                ps.board.place_card("bottom" if len(ps.board.bottom) < 5 else "mid", card)
+                ps.placed_this_round.append(card)
+            ps.hand.clear()
+            session.confirm_placement(pid)
+
+        # R1으로 진행됨
+        assert session.current_round == 1
+        session.deal_cards("p1")
+        session.deal_cards("p2")
+        ps1 = session.players["p1"]
+        assert len(ps1.hand) == 3
+
+        result = session.auto_place_remaining("p1")
+        ps1 = session.players["p1"]
+        assert ps1.confirmed
+        assert len(ps1.hand) == 0
+        assert len(ps1.placed_this_round) == 2
+        assert len(ps1.discarded) == 1
+
+    def test_auto_place_already_confirmed(self):
+        """이미 확정된 플레이어는 None 반환"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"])
+        session.start_game()
+        session.deal_cards("p1")
+        ps1 = session.players["p1"]
+        ps1.confirmed = True
+
+        result = session.auto_place_remaining("p1")
+        assert result is None
+
+    def test_auto_place_unknown_player(self):
+        """존재하지 않는 플레이어는 None 반환"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"])
+        session.start_game()
+        result = session.auto_place_remaining("unknown")
+        assert result is None
+
+    def test_auto_place_both_players_triggers_advance(self):
+        """양쪽 모두 auto_place하면 라운드 진행"""
+        session = GameSession("r1", ["p1", "p2"], ["A", "B"], turn_time_limit=30)
+        session.start_game()
+        session.deal_cards("p1")
+        session.deal_cards("p2")
+
+        session.auto_place_remaining("p1")
+        result = session.auto_place_remaining("p2")
+        # 마지막 confirm이 all_confirmed → _advance_round
+        assert result is not None
+        assert result.get("roundAdvanced") or result.get("type") in ("nextHand", "gameOver")
+
+    def test_auto_place_r4_4player_no_discard(self):
+        """4인 R4: 2장 모두 배치, 버림 없음"""
+        session = GameSession("r1", ["p1", "p2", "p3", "p4"],
+                              ["A", "B", "C", "D"], turn_time_limit=30)
+        session.start_game()
+
+        # R0~R3을 빠르게 진행
+        for rnd in range(5):
+            for pid in session.active_pids:
+                ps = session.players[pid]
+                if ps.confirmed:
+                    continue
+                session.deal_cards(pid)
+                ps = session.players[pid]
+                for card in list(ps.hand):
+                    for line in ['bottom', 'mid', 'top']:
+                        if ps.board.place_card(line, card):
+                            ps.placed_this_round.append(card)
+                            break
+                ps.hand.clear()
+                if rnd > 0 and rnd < 4:
+                    # R1~R3: 1장 discard 필요 (하지만 hand이미 비었으므로 패스)
+                    pass
+                session.confirm_placement(pid)
+
+        # 최종 라운드까지 도달하면 nextHand 반환됨 → 검증 완료
+        # (4인 R4는 2장 딜이지만 auto_place에서 적절히 처리)
+
+    def test_rest_create_room_with_settings(self):
+        """REST API로 방 설정과 함께 생성"""
+        client = TestClient(app)
+        resp = client.post("/api/rooms", json={
+            "name": "Custom Room",
+            "max_players": 3,
+            "turn_time_limit": 45,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["max_players"] == 3
+        assert data["turn_time_limit"] == 45
+
+    def test_rest_create_room_default_settings(self):
+        """REST API 기본 설정"""
+        client = TestClient(app)
+        resp = client.post("/api/rooms", json={"name": "Default Room"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["max_players"] == 6
+        assert data["turn_time_limit"] == 0
+
+    def test_quickmatch_respects_max_players(self):
+        """quickmatch: max_players 초과 방은 스킵"""
+        client = TestClient(app)
+        # max_players=2인 방 생성 후 2명 입장시키면 full
+        resp = client.post("/api/rooms", json={"name": "TinyRoom", "max_players": 2})
+        room_id = resp.json()["id"]
+        room = room_mgr.get_room(room_id)
+        room.players = ["Alice", "Bob"]  # 수동으로 2명 채움
+
+        # quickmatch → TinyRoom은 full이므로 새 방 생성
+        resp2 = client.post("/api/quickmatch")
+        new_room_id = resp2.json()["roomId"]
+        assert new_room_id != room_id

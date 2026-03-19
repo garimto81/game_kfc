@@ -1,0 +1,5 @@
+package com.garimto.ofcpineapple
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
