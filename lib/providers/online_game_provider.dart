@@ -577,6 +577,11 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
     _client?.sendConfirmPlacement();
   }
 
+  /// 이모트 전송
+  void sendEmote(String emoteId) {
+    _client?.sendEmote(emoteId);
+  }
+
   /// Next Hand ready 전송
   void sendReadyForNextHand() {
     _client?.sendReadyForNextHand();

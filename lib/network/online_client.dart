@@ -175,6 +175,10 @@ class OnlineClient {
     _send({'type': 'startGame', 'payload': {}});
   }
 
+  void sendEmote(String emoteId) {
+    _send({'type': 'emote', 'payload': {'emote_id': emoteId}});
+  }
+
   void _send(Map<String, dynamic> msg) {
     _channel?.sink.add(jsonEncode(msg));
   }

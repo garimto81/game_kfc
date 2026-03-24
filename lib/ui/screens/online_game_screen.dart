@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/card.dart' as ofc;
 import '../../models/board.dart';
@@ -10,9 +11,14 @@ import '../../logic/foul_checker.dart';
 import '../../logic/hand_evaluator.dart';
 import '../../logic/simple_ai.dart';
 import '../../providers/online_game_provider.dart';
+import '../../services/audio_service.dart';
+import '../../providers/settings_provider.dart';
 import '../theme/player_colors.dart';
+import '../theme/table_themes.dart';
 import '../widgets/board_grid_view.dart';
 import '../widgets/board_widget.dart';
+import '../widgets/emote_picker.dart';
+import '../widgets/emote_bubble.dart';
 import '../widgets/opponent_page_view.dart';
 import '../widgets/hand_widget.dart';
 
@@ -38,6 +44,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   _OnlineSortMode _sortMode = _OnlineSortMode.none;
   _ViewMode _viewMode = _ViewMode.split;
 
+  // Emote state
+  bool _showEmotePicker = false;
+  final Map<String, String> _activeEmotes = {}; // playerId -> emoteId
+  DateTime? _lastEmoteSent;
+
   // Timer state
   Timer? _countdownTimer;
   double _timeRemaining = 0;
@@ -55,6 +66,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   @override
   void initState() {
     super.initState();
+    AudioService.instance.init();
     _turnPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -81,6 +93,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     _countdownTimer?.cancel();
     _turnHighlightTimer?.cancel();
     _turnPulseController.dispose();
+    AudioService.instance.stopBgm();
     super.dispose();
   }
 
@@ -257,6 +270,23 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     }
   }
 
+  void _sendEmote(String emoteId) {
+    final now = DateTime.now();
+    if (_lastEmoteSent != null &&
+        now.difference(_lastEmoteSent!) < const Duration(seconds: 3)) {
+      return; // Rate limit: 1 emote per 3 seconds
+    }
+    _lastEmoteSent = now;
+    final notifier = ref.read(onlineGameNotifierProvider.notifier);
+    notifier.sendEmote(emoteId);
+  }
+
+  void _onEmoteReceived(String playerId, String emoteId) {
+    setState(() {
+      _activeEmotes[playerId] = emoteId;
+    });
+  }
+
   void _onCardPlaced(ofc.Card card, String line, {String? fromLine}) {
     final onlineState = ref.read(onlineGameNotifierProvider);
     if (!onlineState.isMyTurn) return; // Not my turn
@@ -272,6 +302,12 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final isTripsImpact = isImpactPlacement(card, line, lineCards, maxCards);
 
     notifier.placeCard(card, line);
+
+    // Sound & haptic
+    final settings = ref.read(settingsNotifierProvider);
+    AudioService.instance.enabled = settings.soundEnabled;
+    AudioService.instance.playPlace();
+    if (settings.hapticEnabled) HapticFeedback.lightImpact();
 
     // 로컬 state 변경은 반드시 setState로 감싸야 Flutter rebuild에 반영됨
     if (isTripsImpact) {
@@ -302,6 +338,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (!onlineState.isMyTurn) return; // Not my turn
     final notifier = ref.read(onlineGameNotifierProvider.notifier);
     notifier.discardCard(card);
+    AudioService.instance.playFoul(); // reuse fold sound for discard
     setState(() {
       _hasDiscarded = true;
       _discardedCard = card;
@@ -463,6 +500,23 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (next.phase == 'handScored' && prev?.phase != 'handScored') {
         _showHandScoredDialog(next.gameState);
       }
+      // === Audio & Haptic hooks ===
+      final settings = ref.read(settingsNotifierProvider);
+      AudioService.instance.enabled = settings.soundEnabled;
+
+      // Turn notification sound
+      if (next.isMyTurn && prev?.isMyTurn != true) {
+        AudioService.instance.playTurnNotify();
+        if (settings.hapticEnabled) HapticFeedback.mediumImpact();
+      }
+      // Hand scored
+      if (next.phase == 'handScored' && prev?.phase != 'handScored') {
+        AudioService.instance.playScore();
+      }
+      // New hand dealt
+      if (prev?.hand.isEmpty == true && next.hand.isNotEmpty) {
+        AudioService.instance.playDeal();
+      }
       // Turn highlight animation — pulse for 3 seconds
       if (next.isMyTurn && prev?.isMyTurn != true) {
         setState(() => _turnHighlight = true);
@@ -528,7 +582,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final myColor = _getMyColor();
 
     return Scaffold(
-      backgroundColor: Color.lerp(myColor.background, Colors.black, 0.4),
+      backgroundColor: Colors.black,
       appBar: AppBar(
         title: Text('Hand ${onlineState.handNumber} - R${onlineState.currentRound}'),
         backgroundColor: Color.lerp(myColor.background, Colors.black, 0.6),
@@ -538,6 +592,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
           onPressed: () => _showLeaveConfirmation(),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            tooltip: 'Emotes',
+            onPressed: () => setState(() => _showEmotePicker = !_showEmotePicker),
+          ),
           IconButton(
             icon: Icon(_viewMode == _ViewMode.split
                 ? Icons.grid_view
@@ -569,6 +628,20 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       ),
       body: Stack(
         children: [
+          // Theme background
+          Positioned.fill(
+            child: Builder(builder: (context) {
+              final themeId = ref.watch(settingsNotifierProvider).theme;
+              final theme = TableThemes.getById(themeId);
+              return Image.asset(
+                theme.assetPath,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Color.lerp(myColor.background, Colors.black, 0.4),
+                ),
+              );
+            }),
+          ),
           AnimatedContainer(
             duration: const Duration(milliseconds: 500),
             decoration: BoxDecoration(
@@ -771,6 +844,31 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (onlineState.connectionState == OnlineConnectionState.error &&
           onlineState.errorMessage != null)
         _buildErrorOverlay(onlineState),
+          // Emote picker overlay
+          if (_showEmotePicker)
+            Positioned(
+              bottom: 120,
+              right: 16,
+              child: EmotePicker(
+                onEmoteSelected: (emoteId) {
+                  _sendEmote(emoteId);
+                  setState(() => _showEmotePicker = false);
+                },
+              ),
+            ),
+          // Active emote bubbles
+          for (final entry in _activeEmotes.entries)
+            Positioned(
+              top: 80,
+              left: 16,
+              child: EmoteBubble(
+                key: ValueKey('emote_${entry.key}_${entry.value}'),
+                emoteId: entry.value,
+                onDismissed: () {
+                  if (mounted) setState(() => _activeEmotes.remove(entry.key));
+                },
+              ),
+            ),
       ],
       ),
     );

@@ -32,7 +32,7 @@ class AppSettings {
     this.soundEnabled = true,
     this.hapticEnabled = true,
     this.playerName = 'You',
-    this.theme = 'dark',
+    this.theme = 'black',
     this.serverUrl = '',
   });
 
