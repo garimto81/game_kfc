@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../../models/card.dart' as ofc;
 import 'card_widget.dart';
 
@@ -112,7 +113,19 @@ class HandWidget extends StatelessWidget {
                     draggable: enabled,
                     excited: excitedCards.contains(card),
                     onTap: () => onCardTap?.call(card),
-                  );
+                  )
+                      .animate()
+                      .slideY(
+                        begin: -1.5,
+                        end: 0,
+                        duration: 300.ms,
+                        delay: (cards.indexOf(card) * 50).ms,
+                        curve: Curves.easeOutCubic,
+                      )
+                      .fadeIn(
+                        duration: 200.ms,
+                        delay: (cards.indexOf(card) * 50).ms,
+                      );
                 }).toList(),
               ),
             ),
@@ -185,7 +198,19 @@ class HandWidget extends StatelessWidget {
                   draggable: enabled,
                   excited: excitedCards.contains(card),
                   onTap: () => onCardTap?.call(card),
-                ),
+                )
+                    .animate()
+                    .slideY(
+                      begin: -1.5,
+                      end: 0,
+                      duration: 300.ms,
+                      delay: (cards.indexOf(card) * 80).ms,
+                      curve: Curves.easeOutCubic,
+                    )
+                    .fadeIn(
+                      duration: 200.ms,
+                      delay: (cards.indexOf(card) * 80).ms,
+                    ),
                 if (showDiscardButtons)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),

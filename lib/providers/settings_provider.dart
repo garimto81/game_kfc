@@ -27,6 +27,7 @@ class AppSettings {
   final String playerName;
   final String theme;
   final String serverUrl;
+  final String country; // ISO 3166-1 alpha-2 country code (e.g., 'KR', 'US')
 
   const AppSettings({
     this.soundEnabled = true,
@@ -34,6 +35,7 @@ class AppSettings {
     this.playerName = 'You',
     this.theme = 'black',
     this.serverUrl = '',
+    this.country = 'KR',
   });
 
   AppSettings copyWith({
@@ -42,6 +44,7 @@ class AppSettings {
     String? playerName,
     String? theme,
     String? serverUrl,
+    String? country,
   }) {
     return AppSettings(
       soundEnabled: soundEnabled ?? this.soundEnabled,
@@ -49,6 +52,7 @@ class AppSettings {
       playerName: playerName ?? this.playerName,
       theme: theme ?? this.theme,
       serverUrl: serverUrl ?? this.serverUrl,
+      country: country ?? this.country,
     );
   }
 }
@@ -79,5 +83,9 @@ class SettingsNotifier extends _$SettingsNotifier {
   /// 온라인 서버 URL 설정
   void setServerUrl(String url) {
     state = state.copyWith(serverUrl: url);
+  }
+
+  void setCountry(String code) {
+    state = state.copyWith(country: code);
   }
 }

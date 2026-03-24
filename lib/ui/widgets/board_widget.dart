@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../logic/hand_evaluator.dart';
+import '../../logic/royalty_calculator.dart';
 import '../../models/board.dart';
 import '../../models/card.dart' as ofc;
 import '../../models/card_drag_data.dart';
@@ -149,10 +151,16 @@ class _BoardWidgetState extends State<BoardWidget> {
           message: _lineHelp[lineName] ?? '',
           child: SizedBox(
             width: 52,
-            child: Text(
-              label,
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w500),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+                _buildRoyaltyBadge(cards, lineName),
+              ],
             ),
           ),
         ),
@@ -191,6 +199,42 @@ class _BoardWidgetState extends State<BoardWidget> {
           );
         }),
       ],
+    );
+  }
+
+  Widget _buildRoyaltyBadge(List<ofc.Card> cards, String lineName) {
+    final maxCards = lineName == 'top' ? 3 : 5;
+    if (cards.length < maxCards) return const SizedBox.shrink();
+
+    final result = evaluateHand(cards);
+    final royalty = RoyaltyCalculator.calculate(lineName, cards);
+    final handName = RoyaltyCalculator.handLabel(result.handType);
+
+    Color badgeColor;
+    if (royalty >= 10) {
+      badgeColor = Colors.amber;
+    } else if (royalty >= 2) {
+      badgeColor = Colors.grey[300]!;
+    } else {
+      badgeColor = Colors.grey[600]!;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: badgeColor.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: badgeColor.withValues(alpha: 0.5), width: 0.5),
+      ),
+      child: Text(
+        royalty > 0 ? '$handName +$royalty' : handName,
+        style: TextStyle(
+          fontSize: 8,
+          fontWeight: royalty > 0 ? FontWeight.bold : FontWeight.normal,
+          color: badgeColor,
+        ),
+      ),
     );
   }
 }
