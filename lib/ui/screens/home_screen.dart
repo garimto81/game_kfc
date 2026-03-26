@@ -13,16 +13,34 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   bool _navigatedToGame = false;
   bool _lobbyConnected = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _autoConnect();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && !_navigatedToGame) {
+      // 포그라운드 복귀 시 로비 재연결
+      _lobbyConnected = false;
+      _autoConnect();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   Future<void> _autoConnect() async {
@@ -343,6 +361,68 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             TextStyle(color: Colors.teal[300], fontSize: 13),
                       ),
                   ],
+                  // Dealer card reveal
+                  if (onlineState.dealerCards != null) ...[
+                    const SizedBox(height: 16),
+                    Text('Dealer Selection', style: TextStyle(color: Colors.amber[400], fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: onlineState.dealerCards!.entries.map((e) {
+                        final isDealer = e.key == onlineState.dealerButtonId;
+                        final card = e.value as Map<String, dynamic>;
+                        final rankName = card['rankName'] as String? ?? '';
+                        final suitName = card['suitName'] as String? ?? '';
+                        final playersMap = onlineState.gameState?['players'] as Map<String, dynamic>?;
+                        final playerName = (playersMap?[e.key] as Map<String, dynamic>?)?['name'] as String? ?? '???';
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(playerName, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: isDealer ? Colors.amber[700] : Colors.teal[700],
+                                borderRadius: BorderRadius.circular(8),
+                                border: isDealer ? Border.all(color: Colors.amber, width: 2) : null,
+                              ),
+                              child: Text('${rankName.toUpperCase()} ${_suitSymbol(suitName)}',
+                                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                            ),
+                            if (isDealer) Text('D', style: TextStyle(color: Colors.amber[400], fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                  // Play/Fold selection UI
+                  if (onlineState.isPlayOrFoldPhase) ...[
+                    const SizedBox(height: 16),
+                    Text('Play: ${onlineState.playOrFoldPlayCount}/4  Fold: ${onlineState.playOrFoldFoldCount}',
+                      style: TextStyle(color: Colors.teal[300], fontSize: 14)),
+                    if (onlineState.isMyPlayOrFoldTurn) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () => ref.read(onlineGameNotifierProvider.notifier).sendPlayOrFold('play'),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green[700]),
+                            child: const Text('Play', style: TextStyle(color: Colors.white)),
+                          ),
+                          const SizedBox(width: 16),
+                          ElevatedButton(
+                            onPressed: () => ref.read(onlineGameNotifierProvider.notifier).sendPlayOrFold('fold'),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700]),
+                            child: const Text('Fold', style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
+                      ),
+                    ] else ...[
+                      const SizedBox(height: 8),
+                      Text('Waiting for other players...', style: TextStyle(color: Colors.teal[400])),
+                    ],
+                  ],
                   const SizedBox(height: 24),
                   TextButton(
                     onPressed: () {
@@ -477,7 +557,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 final name = nameController.text.trim();
                 final pName = playerNameController.text.trim();
                 if (name.isEmpty || pName.isEmpty) return;
-                Navigator.of(ctx).pop();
                 ref.read(settingsNotifierProvider.notifier).setPlayerName(pName);
                 final notifier = ref.read(onlineGameNotifierProvider.notifier);
                 final roomId = await notifier.createRoom(
@@ -485,6 +564,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   maxPlayers: selectedMaxPlayers,
                   turnTimeLimit: selectedTimeLimit,
                 );
+                if (!ctx.mounted) return;
+                Navigator.of(ctx).pop();
                 if (roomId != null && mounted) {
                   notifier.joinRoom(roomId, pName);
                 }
@@ -590,5 +671,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
     );
+  }
+
+  String _suitSymbol(String suitName) {
+    switch (suitName) {
+      case 'spade': return '\u2660';
+      case 'heart': return '\u2665';
+      case 'diamond': return '\u2666';
+      case 'club': return '\u2663';
+      default: return '';
+    }
   }
 }

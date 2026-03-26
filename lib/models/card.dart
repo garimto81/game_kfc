@@ -51,6 +51,25 @@ enum Rank {
         return 'A';
     }
   }
+
+  /// 파일명용 약어 (10 → T)
+  String get fileCode {
+    switch (this) {
+      case Rank.two:   return '2';
+      case Rank.three: return '3';
+      case Rank.four:  return '4';
+      case Rank.five:  return '5';
+      case Rank.six:   return '6';
+      case Rank.seven: return '7';
+      case Rank.eight: return '8';
+      case Rank.nine:  return '9';
+      case Rank.ten:   return 'T';
+      case Rank.jack:  return 'J';
+      case Rank.queen: return 'Q';
+      case Rank.king:  return 'K';
+      case Rank.ace:   return 'A';
+    }
+  }
 }
 
 enum Suit {
@@ -74,14 +93,43 @@ enum Suit {
         return '♠';
     }
   }
+
+  /// 파일명용 코드 (Club→C, Diamond→D, Heart→H, Spade→S)
+  String get fileCode {
+    switch (this) {
+      case Suit.club:    return 'C';
+      case Suit.diamond: return 'D';
+      case Suit.heart:   return 'H';
+      case Suit.spade:   return 'S';
+    }
+  }
+
+  /// 파일명 색상 접미사 (Club→G, Diamond→B, Heart→R, Spade→B)
+  String get fileColor {
+    switch (this) {
+      case Suit.club:    return 'G';
+      case Suit.diamond: return 'B';
+      case Suit.heart:   return 'R';
+      case Suit.spade:   return 'B';
+    }
+  }
 }
 
 @freezed
 class Card with _$Card {
+  const Card._();
+
   const factory Card({
     required Rank rank,
     required Suit suit,
   }) = _Card;
 
   factory Card.fromJson(Map<String, dynamic> json) => _$CardFromJson(json);
+
+  /// 카드 앞면 이미지 에셋 경로
+  String get imagePath =>
+      'assets/cards/${suit.fileCode}_${rank.fileCode}_${suit.fileColor}.png';
+
+  /// 카드 뒷면 이미지 에셋 경로
+  static const String backImagePath = 'assets/cards/card_back.png';
 }

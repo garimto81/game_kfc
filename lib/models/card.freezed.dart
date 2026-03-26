@@ -112,8 +112,8 @@ class __$$CardImplCopyWithImpl<$Res>
 
 /// @nodoc
 @JsonSerializable()
-class _$CardImpl implements _Card {
-  const _$CardImpl({required this.rank, required this.suit});
+class _$CardImpl extends _Card {
+  const _$CardImpl({required this.rank, required this.suit}) : super._();
 
   factory _$CardImpl.fromJson(Map<String, dynamic> json) =>
       _$$CardImplFromJson(json);
@@ -155,9 +155,10 @@ class _$CardImpl implements _Card {
   }
 }
 
-abstract class _Card implements Card {
+abstract class _Card extends Card {
   const factory _Card({required final Rank rank, required final Suit suit}) =
       _$CardImpl;
+  const _Card._() : super._();
 
   factory _Card.fromJson(Map<String, dynamic> json) = _$CardImpl.fromJson;
 

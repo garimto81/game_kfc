@@ -43,8 +43,9 @@ class AudioService {
   Future<void> playTimeWarning() => _playSfx('NotificationTimeWinding.mp3');
   Future<void> playWin() => _playSfx('SoundWinPot.mp3');
   Future<void> playScoop() => _playSfx('SoundWinCongratulation.mp3');
-  Future<void> playFantasyland() => _playSfx('SoundTournamentWin.mp3');
-  Future<void> playFoul() => _playSfx('SoundFold.mp3');
+  Future<void> playFantasyland() => _playSfx('FishWheelCelebration.mp3');
+  Future<void> playFoul() => _playSfx('SoundAofDynamiteBomb.mp3');
+  Future<void> playDiscard() => _playSfx('SoundFold.mp3');
   Future<void> playScore() => _playSfx('SoundGatherChips.mp3');
   Future<void> playCoinDrop() => _playSfx('CoinDrop.mp3');
 

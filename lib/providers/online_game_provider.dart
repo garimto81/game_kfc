@@ -45,6 +45,13 @@ class OnlineState {
   final int readyCount;
   final int readyTotal;
   final bool waitingForReady;
+  final String? dealerButtonId;
+  final Map<String, dynamic>? dealerCards;
+  final bool isPlayOrFoldPhase;
+  final bool isMyPlayOrFoldTurn;
+  final int playOrFoldPlayCount;
+  final int playOrFoldFoldCount;
+  final int playOrFoldRemaining;
 
   const OnlineState({
     this.connectionState = OnlineConnectionState.disconnected,
@@ -73,6 +80,13 @@ class OnlineState {
     this.readyCount = 0,
     this.readyTotal = 0,
     this.waitingForReady = false,
+    this.dealerButtonId,
+    this.dealerCards,
+    this.isPlayOrFoldPhase = false,
+    this.isMyPlayOrFoldTurn = false,
+    this.playOrFoldPlayCount = 0,
+    this.playOrFoldFoldCount = 0,
+    this.playOrFoldRemaining = 0,
   });
 
   OnlineState copyWith({
@@ -105,6 +119,13 @@ class OnlineState {
     int? readyTotal,
     bool? waitingForReady,
     bool clearWaitingReady = false,
+    String? dealerButtonId,
+    Map<String, dynamic>? dealerCards,
+    bool? isPlayOrFoldPhase,
+    bool? isMyPlayOrFoldTurn,
+    int? playOrFoldPlayCount,
+    int? playOrFoldFoldCount,
+    int? playOrFoldRemaining,
   }) {
     return OnlineState(
       connectionState: connectionState ?? this.connectionState,
@@ -133,6 +154,13 @@ class OnlineState {
       readyCount: clearWaitingReady ? 0 : (readyCount ?? this.readyCount),
       readyTotal: clearWaitingReady ? 0 : (readyTotal ?? this.readyTotal),
       waitingForReady: clearWaitingReady ? false : (waitingForReady ?? this.waitingForReady),
+      dealerButtonId: dealerButtonId ?? this.dealerButtonId,
+      dealerCards: dealerCards ?? this.dealerCards,
+      isPlayOrFoldPhase: isPlayOrFoldPhase ?? this.isPlayOrFoldPhase,
+      isMyPlayOrFoldTurn: isMyPlayOrFoldTurn ?? this.isMyPlayOrFoldTurn,
+      playOrFoldPlayCount: playOrFoldPlayCount ?? this.playOrFoldPlayCount,
+      playOrFoldFoldCount: playOrFoldFoldCount ?? this.playOrFoldFoldCount,
+      playOrFoldRemaining: playOrFoldRemaining ?? this.playOrFoldRemaining,
     );
   }
 }
@@ -207,11 +235,24 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
   /// 방 생성
   Future<String?> createRoom(String name,
       {int maxPlayers = 6, int turnTimeLimit = 0}) async {
-    if (_client == null) return null;
+    if (_client == null) {
+      state = state.copyWith(
+        connectionState: OnlineConnectionState.error,
+        errorMessage: 'Not connected to server',
+      );
+      return null;
+    }
     try {
       final room = await _client!.createRoom(name,
           maxPlayers: maxPlayers, turnTimeLimit: turnTimeLimit);
-      final roomId = room['id'] as String;
+      final roomId = room['id'] as String?;
+      if (roomId == null) {
+        state = state.copyWith(
+          connectionState: OnlineConnectionState.error,
+          errorMessage: 'Server returned invalid room data',
+        );
+        return null;
+      }
       state = state.copyWith(roomId: roomId);
       return roomId;
     } catch (e) {
@@ -354,6 +395,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
       case 'gameStart':
         final ttl = payload['turnTimeLimit'] as int? ?? 0;
         final gameStartTurnPid = payload['currentTurnPlayerId'] as String?;
+        final gameStartDealerId = payload['dealerButtonId'] as String?;
         state = state.copyWith(
           connectionState: OnlineConnectionState.playing,
           gameState: payload,
@@ -363,6 +405,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           clearDeadline: true,
           currentTurnPlayerId: gameStartTurnPid,
           isMyTurn: gameStartTurnPid == null || gameStartTurnPid == state.playerId,
+          dealerButtonId: gameStartDealerId ?? state.dealerButtonId,
         );
         break;
       case 'stateUpdate':
@@ -392,7 +435,8 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
         state = state.copyWith(
           gameState: payload,
           phase: payload['phase'] as String? ?? state.phase,
-          hand: serverHand ?? state.hand,
+          // 빈 hand가 오면 기존 hand 유지 (턴 아닌 플레이어의 hand 누출 방지)
+          hand: (serverHand != null && serverHand.isNotEmpty) ? serverHand : state.hand,
           isInFantasyland: myFL ?? state.isInFantasyland,
           handNumber: stateHandNum ?? state.handNumber,
           turnDeadline: deadline?.toDouble(),
@@ -518,6 +562,39 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           );
         }
         break;
+      case 'dealerSelection':
+        final dealerCardsRaw = payload['dealerCards'] as Map<String, dynamic>?;
+        final dealerId = payload['dealerId'] as String?;
+        state = state.copyWith(
+          dealerButtonId: dealerId,
+          dealerCards: dealerCardsRaw,
+        );
+        break;
+      case 'playOrFoldRequest':
+        final pofTargetId = payload['playerId'] as String?;
+        state = state.copyWith(
+          isPlayOrFoldPhase: true,
+          isMyPlayOrFoldTurn: pofTargetId == null || pofTargetId == state.playerId,
+        );
+        break;
+      case 'playOrFoldUpdate':
+        state = state.copyWith(
+          isPlayOrFoldPhase: true,
+          isMyPlayOrFoldTurn: false,
+          playOrFoldPlayCount: payload['playCount'] as int? ?? 0,
+          playOrFoldFoldCount: payload['foldCount'] as int? ?? 0,
+          playOrFoldRemaining: payload['remaining'] as int? ?? 0,
+        );
+        break;
+      case 'playOrFoldResult':
+        final choices = payload['choices'] as Map<String, dynamic>?;
+        final myChoice = choices?[state.playerId] as String?;
+        state = state.copyWith(
+          isPlayOrFoldPhase: false,
+          isMyPlayOrFoldTurn: false,
+          isFolded: myChoice == 'fold',
+        );
+        break;
       case 'playerLeft':
         final reason = payload['reason'] as String?;
         state = state.copyWith(
@@ -585,6 +662,11 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
   /// Next Hand ready 전송
   void sendReadyForNextHand() {
     _client?.sendReadyForNextHand();
+  }
+
+  /// Play/Fold 응답 전송
+  void sendPlayOrFold(String choice) {
+    _client?.sendPlayOrFoldResponse(choice);
   }
 
   /// 게임 시작 (호스트 전용)
@@ -729,6 +811,15 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
         connectionState: OnlineConnectionState.error,
         errorMessage: 'Failed to reconnect. Tap retry to try again.',
       );
+    }
+  }
+
+  /// 앱 포그라운드 복귀 시 연결 상태 확인용 ping
+  void pingConnection() {
+    try {
+      _client?.sendHeartbeat();
+    } catch (_) {
+      _onConnectionLost();
     }
   }
 

@@ -11,6 +11,12 @@ class CardWidget extends StatelessWidget {
   final bool excited;
   final VoidCallback? onTap;
 
+  static const double _cardWidth = 50;
+  static const double _cardHeight = 70;
+  static const double _miniCardWidth = 24;
+  static const double _miniCardHeight = 34;
+
+
   const CardWidget({
     super.key,
     required this.card,
@@ -21,171 +27,61 @@ class CardWidget extends StatelessWidget {
     this.onTap,
   });
 
-  Color get _suitColor {
-    switch (card.suit) {
-      case ofc.Suit.spade:
-        return const Color(0xFF212121); // 검정
-      case ofc.Suit.heart:
-        return const Color(0xFFD32F2F); // 빨강
-      case ofc.Suit.diamond:
-        return const Color(0xFF1565C0); // 파랑
-      case ofc.Suit.club:
-        return const Color(0xFF2E7D32); // 초록
-    }
+  Widget _buildFallbackCard(double w, double h) {
+    return Container(
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1565C0),
+        borderRadius: BorderRadius.circular(h * 0.08),
+        border: Border.all(color: Colors.white24, width: 1),
+      ),
+      child: const Center(child: Text('?', style: TextStyle(color: Colors.white, fontSize: 16))),
+    );
   }
 
-  Widget _buildBackFace() {
-    return Container(
-      width: 50,
-      height: 70,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white24, width: 1),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1565C0), Color(0xFF0D47A1)],
-        ),
-        boxShadow: const [
-          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(1, 2)),
-        ],
+  Widget _buildBackFace({double? width, double? height}) {
+    final w = width ?? _cardWidth;
+    final h = height ?? _cardHeight;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(h * 0.08),
+      child: Image.asset(
+        ofc.Card.backImagePath,
+        width: w,
+        height: h,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => _buildFallbackCard(w, h),
       ),
-      child: Center(
-        child: Container(
-          width: 36,
-          height: 54,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: Colors.white24, width: 1),
-          ),
-          child: const Center(
-            child: Text(
-              '\u2660',
-              style: TextStyle(color: Colors.white24, fontSize: 18),
-            ),
-          ),
-        ),
+    );
+  }
+
+  Widget _buildFrontFace({double? width, double? height}) {
+    final w = width ?? _cardWidth;
+    final h = height ?? _cardHeight;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(h * 0.08),
+      child: Image.asset(
+        card.imagePath,
+        width: w,
+        height: h,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => _buildFallbackCard(w, h),
       ),
     );
   }
 
   Widget _buildMiniCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: Colors.grey[300]!, width: 0.5),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              card.rank.rankName,
-              style: TextStyle(
-                fontSize: 8,
-                fontWeight: FontWeight.bold,
-                color: _suitColor,
-                height: 1.0,
-              ),
-            ),
-            Text(
-              card.suit.suitSymbol,
-              style: TextStyle(fontSize: 8, color: _suitColor, height: 1.0),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFrontFace() {
-    return Container(
-      width: 50,
-      height: 70,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!, width: 1),
-        boxShadow: const [
-          BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(1, 2)),
-        ],
-      ),
-      child: Stack(
-        children: [
-          // Top-left rank+suit
-          Positioned(
-            top: 3,
-            left: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(
-                  card.rank.rankName,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: _suitColor,
-                    height: 1.0,
-                  ),
-                ),
-                Text(
-                  card.suit.suitSymbol,
-                  style: TextStyle(fontSize: 9, color: _suitColor, height: 1.0),
-                ),
-              ],
-            ),
-          ),
-          // Center suit
-          Center(
-            child: Text(
-              card.suit.suitSymbol,
-              style: TextStyle(fontSize: 22, color: _suitColor),
-            ),
-          ),
-          // Bottom-right rank+suit (upside-down effect via alignment)
-          Positioned(
-            bottom: 3,
-            right: 4,
-            child: RotatedBox(
-              quarterTurns: 2,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    card.rank.rankName,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: _suitColor,
-                      height: 1.0,
-                    ),
-                  ),
-                  Text(
-                    card.suit.suitSymbol,
-                    style: TextStyle(fontSize: 9, color: _suitColor, height: 1.0),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    if (faceDown) {
+      return _buildBackFace(width: _miniCardWidth, height: _miniCardHeight);
+    }
+    return _buildFrontFace(width: _miniCardWidth, height: _miniCardHeight);
   }
 
   @override
   Widget build(BuildContext context) {
     if (miniMode) {
-      if (faceDown) {
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(2),
-            color: const Color(0xFF1565C0),
-            border: Border.all(color: Colors.white24, width: 0.5),
-          ),
-        );
-      }
       return _buildMiniCard();
     }
 
@@ -195,7 +91,10 @@ class CardWidget extends StatelessWidget {
         return ScaleTransition(scale: animation, child: child);
       },
       child: faceDown
-          ? _buildBackFace()
+          ? KeyedSubtree(
+              key: const ValueKey('back'),
+              child: _buildBackFace(),
+            )
           : KeyedSubtree(
               key: ValueKey('${card.rank.name}_${card.suit.name}'),
               child: _buildFrontFace(),
@@ -232,7 +131,10 @@ class CardWidget extends StatelessWidget {
         feedback: Material(
           elevation: 8,
           borderRadius: BorderRadius.circular(8),
-          child: Transform.scale(scale: 1.1, child: _buildFrontFace()),
+          child: Transform.scale(
+            scale: 1.1,
+            child: faceDown ? _buildBackFace() : _buildFrontFace(),
+          ),
         ),
         childWhenDragging: Opacity(opacity: 0.3, child: displayContent),
         child: GestureDetector(onTap: onTap, child: displayContent),

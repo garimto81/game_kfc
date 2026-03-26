@@ -6,11 +6,13 @@ import 'board_widget.dart';
 class OpponentPageView extends StatefulWidget {
   final List<Player> opponents;
   final bool hideCardsForFL;
+  final bool myIsInFL;
 
   const OpponentPageView({
     super.key,
     required this.opponents,
     this.hideCardsForFL = true,
+    this.myIsInFL = false,
   });
 
   @override
@@ -20,6 +22,14 @@ class OpponentPageView extends StatefulWidget {
 class _OpponentPageViewState extends State<OpponentPageView> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+
+  @override
+  void didUpdateWidget(covariant OpponentPageView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_currentPage >= widget.opponents.length) {
+      _currentPage = widget.opponents.isEmpty ? 0 : widget.opponents.length - 1;
+    }
+  }
 
   @override
   void dispose() {
@@ -65,8 +75,8 @@ class _OpponentPageViewState extends State<OpponentPageView> {
             },
             itemBuilder: (context, index) {
               final opp = widget.opponents[index];
-              final shouldHide =
-                  widget.hideCardsForFL && opp.isInFantasyland;
+              final shouldHide = widget.hideCardsForFL &&
+                  (opp.isInFantasyland || widget.myIsInFL);
               return FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Padding(

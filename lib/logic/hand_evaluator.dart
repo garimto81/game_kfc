@@ -165,6 +165,33 @@ bool _isExcitingResult(HandResult r, bool isTop) {
   return false;
 }
 
+/// 라인 완성 시 축하 레벨 반환 (0=없음, 1=shimmer, 2=burst, 3=explosion)
+int getCelebrationLevel(List<Card> cards, String lineName) {
+  final maxCards = lineName == 'top' ? 3 : 5;
+  if (cards.length < maxCards) return 0;
+
+  final result = evaluateHand(cards);
+
+  // Level 3: Quads+ (모든 라인)
+  if (result.handType.value >= HandType.fourOfAKind.value) return 3;
+
+  if (lineName == 'top') {
+    // Top: Trips = Level 2, QQ+ Pair = Level 1
+    if (result.handType == HandType.threeOfAKind) return 2;
+    if (result.handType == HandType.onePair &&
+        result.kickers.isNotEmpty &&
+        result.kickers[0] >= 12) {
+      return 1;
+    }
+    return 0;
+  } else {
+    // Mid/Bottom: Full House = Level 2, Flush/Straight = Level 1
+    if (result.handType.value >= HandType.fullHouse.value) return 2;
+    if (result.handType.value >= HandType.straight.value) return 1;
+    return 0;
+  }
+}
+
 /// 핸드 카드 중 보드 라인에 놓으면 트립스+/QQ+ FL을 완성하는 카드 Set 반환.
 /// 단일 카드 기여도 기반: 이 카드 1장이 직접적으로 핸드 강도를 만드는지 판정.
 Set<Card> findExcitingCards(

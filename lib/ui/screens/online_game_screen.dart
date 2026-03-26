@@ -34,7 +34,7 @@ class OnlineGameScreen extends ConsumerStatefulWidget {
 }
 
 class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _hasDiscarded = false;
   ofc.Card? _discardedCard;
   final List<({ofc.Card card, String line, bool impact})> _localPlacements = [];
@@ -43,6 +43,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   int _impactGeneration = 0; // 임팩트 리빌드 강제용
   _OnlineSortMode _sortMode = _OnlineSortMode.none;
   _ViewMode _viewMode = _ViewMode.split;
+
+  // Foul 연출 상태
+  bool _foulTriggered = false;
+  // 축하 사운드 중복 방지 (라운드마다 초기화)
+  final Set<String> _celebratedLines = {};
 
   // Emote state
   bool _showEmotePicker = false;
@@ -66,6 +71,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AudioService.instance.init();
     _turnPulseController = AnimationController(
       vsync: this,
@@ -89,7 +95,28 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // 포그라운드 복귀 시 연결 상태 확인 → 끊겼으면 즉시 reconnect
+      final gs = ref.read(onlineGameNotifierProvider);
+      final cs = gs.connectionState;
+      if (cs == OnlineConnectionState.playing ||
+          cs == OnlineConnectionState.inRoom) {
+        // heartbeat 즉시 전송하여 연결 확인 — 실패 시 onDone/onError가 트리거됨
+        ref.read(onlineGameNotifierProvider.notifier).pingConnection();
+      } else if (cs == OnlineConnectionState.reconnecting ||
+                 cs == OnlineConnectionState.error) {
+        ref.read(onlineGameNotifierProvider.notifier).autoReconnect();
+      }
+    } else if (state == AppLifecycleState.paused) {
+      AudioService.instance.stopBgm();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _turnHighlightTimer?.cancel();
     _turnPulseController.dispose();
@@ -175,6 +202,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final players = onlineState.gameState?['players'] as Map<String, dynamic>?;
     final turnPid = onlineState.currentTurnPlayerId;
     final turnName = (players?[turnPid] as Map<String, dynamic>?)?['name'] ?? 'Opponent';
+    final isDealer = turnPid != null && turnPid == onlineState.dealerButtonId;
 
     return Container(
       width: double.infinity,
@@ -187,6 +215,17 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
           const SizedBox(width: 8),
           Text("Waiting for $turnName's turn...",
               style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          if (isDealer) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.amber[700],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('D', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+          ],
         ],
       ),
     );
@@ -330,7 +369,43 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       });
     }
 
+    _checkCelebration();
+    _checkFoulAnimation();
     _tryAutoConfirm();
+  }
+
+  /// 라인 완성 시 핸드 강도에 따라 축하 사운드 재생
+  void _checkCelebration() {
+    final board = _getMyBoard();
+    final lines = {'top': board.top, 'mid': board.mid, 'bottom': board.bottom};
+
+    for (final entry in lines.entries) {
+      final maxCards = entry.key == 'top' ? 3 : 5;
+      if (entry.value.length == maxCards && !_celebratedLines.contains(entry.key)) {
+        final level = getCelebrationLevel(entry.value, entry.key);
+        if (level >= 3) {
+          _celebratedLines.add(entry.key);
+          AudioService.instance.playScoop();
+          return;
+        } else if (level >= 2) {
+          _celebratedLines.add(entry.key);
+          AudioService.instance.playWin();
+          return;
+        }
+      }
+    }
+  }
+
+  /// 보드 완성 시 Foul 감지 → 충격 연출 트리거
+  void _checkFoulAnimation() {
+    final board = _getMyBoard();
+    if (board.isFull() && checkFoul(board) && !_foulTriggered) {
+      setState(() => _foulTriggered = true);
+      AudioService.instance.playFoul();
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _foulTriggered = false);
+      });
+    }
   }
 
   void _onDiscard(ofc.Card card) {
@@ -338,7 +413,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (!onlineState.isMyTurn) return; // Not my turn
     final notifier = ref.read(onlineGameNotifierProvider.notifier);
     notifier.discardCard(card);
-    AudioService.instance.playFoul(); // reuse fold sound for discard
+    AudioService.instance.playDiscard();
     setState(() {
       _hasDiscarded = true;
       _discardedCard = card;
@@ -359,12 +434,19 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       return;
     }
 
-    // 4P R4: explicit confirm required, no auto-confirm
-    final playerCount = (onlineState.gameState?['players'] as Map?)?.length ?? 0;
-    final is4pR4 = onlineState.currentRound == 4 && playerCount >= 4;
-    if (is4pR4) return;
+    // R1: 5장 모두 배치 → 즉시 auto-confirm (discard 불필요)
+    if (onlineState.currentRound == 1 && onlineState.hand.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onConfirm();
+      });
+      return;
+    }
 
-    if (onlineState.currentRound > 0 &&
+    // 4P R4: explicit confirm required, no auto-confirm
+    if (_is4pR4(onlineState)) return;
+
+    // R2~R5: 2장 배치 + 1장 버림 → auto-confirm
+    if (onlineState.currentRound > 1 &&
         onlineState.hand.isEmpty &&
         _hasDiscarded) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -390,6 +472,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
             _hasDiscarded = false;
             _discardedCard = null;
             _localPlacements.clear();
+            _celebratedLines.clear();
           });
         }
       });
@@ -401,6 +484,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       _hasDiscarded = false;
       _discardedCard = null;
       _localPlacements.clear();
+      _celebratedLines.clear();
     });
   }
 
@@ -412,20 +496,22 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       final board = _getMyBoard();
       return board.isFull();
     }
+
+    // 4P R4: 2장 모두 배치하면 confirm (discard 불필요)
+    final is4pR4 = _is4pR4(onlineState);
+    if (is4pR4) {
+      return onlineState.hand.isEmpty;
+    }
+
     if (onlineState.hand.isNotEmpty) return false;
-
-    // 4P R4: no discard needed
-    final playerCount = (onlineState.gameState?['players'] as Map?)?.length ?? 0;
-    final is4pR4 = onlineState.currentRound == 4 && playerCount >= 4;
-    if (is4pR4) return true;
-
-    if (onlineState.currentRound > 0 && !_hasDiscarded) return false;
+    // R1: 5장 모두 배치만 확인, R2+: discard 필수
+    if (onlineState.currentRound > 1 && !_hasDiscarded) return false;
     return true;
   }
 
   bool _is4pR4(OnlineState onlineState) {
     final playerCount = (onlineState.gameState?['players'] as Map?)?.length ?? 0;
-    return onlineState.currentRound == 4 && playerCount >= 4;
+    return onlineState.currentRound == 5 && playerCount >= 4;
   }
 
   OFCBoard _getMyBoard() {
@@ -576,7 +662,9 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final myBoard = _getMyBoard();
     final availableLines = _getAvailableLines(myBoard);
     // FL이면 discard 버튼 필요 없음 (confirm 시 자동 discard)
-    final isPineapple = onlineState.currentRound > 0 && !onlineState.isInFantasyland;
+    // 4인 R4: 2장 모두 배치 (버림 없음) → isPineapple=false로 DISCARD UI 비활성화
+    final is4pR4 = _is4pR4(onlineState);
+    final isPineapple = onlineState.currentRound > 1 && !onlineState.isInFantasyland && !is4pR4;
     final opponents = _buildOpponents(onlineState, notifier);
 
     final myColor = _getMyColor();
@@ -708,6 +796,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                 Expanded(
                   child: OpponentPageView(
                     opponents: _buildAllPlayers(onlineState, notifier),
+                    myIsInFL: onlineState.isInFantasyland,
                   ),
                 )
               else
@@ -722,6 +811,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                 Expanded(
                   child: OpponentPageView(
                     opponents: opponents,
+                    myIsInFL: onlineState.isInFantasyland,
                   ),
                 ),
                 Expanded(
@@ -739,8 +829,10 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                     onUndoCard: _onTapPlacedCard,
                     currentTurnPlacements: _localPlacements,
                     lineImpactCards: _lineImpactCards,
+                    myIsInFL: onlineState.isInFantasyland,
                     foulWarning: _buildCompactFoulWarning(myBoard),
                     mySeatIndex: _getSeatIndex(onlineState.playerId),
+                    showFoulAnimation: _foulTriggered,
                   ),
                 ),
               ],
@@ -1155,6 +1247,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   currentTurnPlacements: _localPlacements,
                   lineImpactCards: _lineImpactCards,
                   onUndoCard: _onTapPlacedCard,
+                  showFoulAnimation: _foulTriggered,
                 ),
               ),
             ),
@@ -1176,10 +1269,10 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
   void _closeHandScoredDialog() {
     final ctx = _handScoredDialogContext;
-    if (ctx != null) {
+    if (ctx != null && ctx.mounted) {
       Navigator.of(ctx).pop();
-      _handScoredDialogContext = null;
     }
+    _handScoredDialogContext = null;
   }
 
   void _showHandScoredDialog(Map<String, dynamic>? payload) {

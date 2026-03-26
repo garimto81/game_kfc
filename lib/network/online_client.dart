@@ -14,6 +14,7 @@ class OnlineClient {
   Timer? _heartbeatTimer;
   void Function()? onUnexpectedDisconnect;
   bool _intentionalDisconnect = false;
+  int _missedPongs = 0;
 
   final _messageController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -91,6 +92,11 @@ class OnlineClient {
     }
   }
 
+  /// 포그라운드 복귀 시 연결 확인용 heartbeat 즉시 전송
+  void sendHeartbeat() {
+    _send({'type': 'heartbeat', 'payload': {}});
+  }
+
   /// WebSocket: 연결 + 참가
   Future<void> connectAndJoin(String roomId, String playerName) async {
     _intentionalDisconnect = true;
@@ -104,6 +110,10 @@ class OnlineClient {
     _channel!.stream.listen(
       (data) {
         final json = jsonDecode(data as String) as Map<String, dynamic>;
+        if (json['type'] == 'pong') {
+          _missedPongs = 0;
+          return;
+        }
         _messageController.add(json);
         if (json['type'] == 'joinAccepted') {
           playerId = json['payload']['playerId'] as String;
@@ -117,8 +127,15 @@ class OnlineClient {
     // Join request
     _send({'type': 'joinRequest', 'payload': {'playerName': playerName}});
 
-    // Heartbeat every 25 seconds
+    // Heartbeat every 25 seconds with pong validation
+    _missedPongs = 0;
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      _missedPongs++;
+      if (_missedPongs >= 3) {
+        // 3회 연속 pong 미수신 → dead connection
+        _handleUnexpectedDisconnect();
+        return;
+      }
       _send({'type': 'heartbeat', 'payload': {}});
     });
   }
@@ -179,6 +196,10 @@ class OnlineClient {
     _send({'type': 'emote', 'payload': {'emote_id': emoteId}});
   }
 
+  void sendPlayOrFoldResponse(String choice) {
+    _send({'type': 'playOrFoldResponse', 'payload': {'choice': choice}});
+  }
+
   void _send(Map<String, dynamic> msg) {
     _channel?.sink.add(jsonEncode(msg));
   }
@@ -202,6 +223,10 @@ class OnlineClient {
       _channel!.stream.listen(
         (data) {
           final json = jsonDecode(data as String) as Map<String, dynamic>;
+          if (json['type'] == 'pong') {
+            _missedPongs = 0;
+            return;
+          }
           _messageController.add(json);
           if (!completer.isCompleted) {
             if (json['type'] == 'reconnected') {
@@ -222,7 +247,13 @@ class OnlineClient {
       );
 
       _send({'type': 'reconnect', 'payload': {'sessionToken': sessionToken}});
+      _missedPongs = 0;
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+        _missedPongs++;
+        if (_missedPongs >= 3) {
+          _handleUnexpectedDisconnect();
+          return;
+        }
         _send({'type': 'heartbeat', 'payload': {}});
       });
 

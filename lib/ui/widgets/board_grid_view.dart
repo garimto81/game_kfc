@@ -25,8 +25,10 @@ class BoardGridView extends StatelessWidget {
   final List<({ofc.Card card, String line, bool impact})> currentTurnPlacements;
   final Set<({ofc.Card card, String line})> lineImpactCards;
   final bool hideCardsForFL;
+  final bool myIsInFL;
   final Widget? foulWarning;
   final int mySeatIndex;
+  final bool showFoulAnimation;
 
   const BoardGridView({
     super.key,
@@ -39,8 +41,10 @@ class BoardGridView extends StatelessWidget {
     this.currentTurnPlacements = const [],
     this.lineImpactCards = const {},
     this.hideCardsForFL = true,
+    this.myIsInFL = false,
     this.foulWarning,
     this.mySeatIndex = 0,
+    this.showFoulAnimation = false,
   });
 
   @override
@@ -62,7 +66,7 @@ class BoardGridView extends StatelessWidget {
       }
     } else {
       // Determine my board position based on grid size
-      final myIndex = (cols == 3) ? 2 : 2; // bottom-left for 2x2, position 2 for 3x2
+      final myIndex = (cols == 3) ? 4 : (rows == 1 ? 1 : 2); // bottom-center for 3x2, right for 2x1, bottom-left for 2x2
 
       if (myIndex < cellCount) {
         cells[myIndex] = _buildMyBoardCell();
@@ -138,7 +142,7 @@ class BoardGridView extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
-                ?foulWarning,
+                if (foulWarning != null) foulWarning!,
               ],
             ),
           ),
@@ -155,6 +159,7 @@ class BoardGridView extends StatelessWidget {
                   currentTurnPlacements: currentTurnPlacements,
                   lineImpactCards: lineImpactCards,
                   onUndoCard: onUndoCard,
+                  showFoulAnimation: showFoulAnimation,
                 ),
               ),
             ),
@@ -165,7 +170,7 @@ class BoardGridView extends StatelessWidget {
   }
 
   Widget _buildOpponentCell(Player opponent) {
-    final shouldHide = hideCardsForFL && opponent.isInFantasyland;
+    final shouldHide = hideCardsForFL && (opponent.isInFantasyland || myIsInFL);
     final color = PlayerColors.forSeat(opponent.seatIndex);
     return Container(
       decoration: BoxDecoration(

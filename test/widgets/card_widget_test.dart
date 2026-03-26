@@ -6,24 +6,31 @@ import 'package:game_kfc/ui/widgets/card_widget.dart';
 
 void main() {
   group('CardWidget', () {
-    testWidgets('T1: 앞면 카드 표시 - 랭크/수트', (tester) async {
+    testWidgets('T1: 앞면 카드 표시 - 올바른 이미지 에셋', (tester) async {
       const card = ofc.Card(rank: ofc.Rank.ace, suit: ofc.Suit.spade);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: CardWidget(card: card)),
       ));
-      // New card design: rank in top-left + bottom-right (2), suit in top-left + center + bottom-right (3)
-      expect(find.text('A'), findsNWidgets(2));
-      expect(find.text('\u2660'), findsNWidgets(3));
+      final imageFinder = find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == 'assets/cards/S_A_B.png',
+      );
+      expect(imageFinder, findsOneWidget);
     });
 
-    testWidgets('T2: 뒷면 카드 표시 - 랭크/수트 없음', (tester) async {
+    testWidgets('T2: 뒷면 카드 표시 - 뒷면 이미지 사용', (tester) async {
       const card = ofc.Card(rank: ofc.Rank.ace, suit: ofc.Suit.spade);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: CardWidget(card: card, faceDown: true)),
       ));
-      expect(find.text('A'), findsNothing);
-      // Back face has a decorative spade symbol, but rank text must not appear
-      expect(find.text('A'), findsNothing);
+      final backImageFinder = find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == 'assets/cards/card_back.png',
+      );
+      expect(backImageFinder, findsOneWidget);
+      // 앞면 이미지가 없어야 함
+      final frontImageFinder = find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == 'assets/cards/S_A_B.png',
+      );
+      expect(frontImageFinder, findsNothing);
     });
 
     testWidgets('T3: draggable=true 시 Draggable 존재', (tester) async {
@@ -34,13 +41,15 @@ void main() {
       expect(find.byType(Draggable<CardDragData>), findsOneWidget);
     });
 
-    testWidgets('T4: 하트/다이아몬드 카드 빨간색', (tester) async {
+    testWidgets('T4: 하트 카드 올바른 이미지 경로', (tester) async {
       const card = ofc.Card(rank: ofc.Rank.queen, suit: ofc.Suit.heart);
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: CardWidget(card: card)),
       ));
-      expect(find.text('Q'), findsNWidgets(2));
-      expect(find.text('\u2665'), findsNWidgets(3));
+      final imageFinder = find.byWidgetPredicate(
+        (w) => w is Image && w.image is AssetImage && (w.image as AssetImage).assetName == 'assets/cards/H_Q_R.png',
+      );
+      expect(imageFinder, findsOneWidget);
     });
 
     testWidgets('T5: onTap 콜백 호출', (tester) async {
@@ -49,7 +58,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: CardWidget(card: card, onTap: () => tapped = true)),
       ));
-      await tester.tap(find.text('10').first);
+      await tester.tap(find.byType(CardWidget));
       expect(tapped, isTrue);
     });
   });

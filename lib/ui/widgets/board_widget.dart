@@ -1,4 +1,7 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../../logic/hand_evaluator.dart';
 import '../../logic/royalty_calculator.dart';
 import '../../models/board.dart';
@@ -15,6 +18,7 @@ class BoardWidget extends StatefulWidget {
   final Set<({ofc.Card card, String line})> lineImpactCards;
   final void Function(ofc.Card card, String line)? onUndoCard;
   final bool hideCards;
+  final bool showFoulAnimation;
 
   const BoardWidget({
     super.key,
@@ -25,6 +29,7 @@ class BoardWidget extends StatefulWidget {
     this.lineImpactCards = const {},
     this.onUndoCard,
     this.hideCards = false,
+    this.showFoulAnimation = false,
   });
 
   @override
@@ -35,6 +40,38 @@ class _BoardWidgetState extends State<BoardWidget> {
   final _topKey = GlobalKey();
   final _midKey = GlobalKey();
   final _bottomKey = GlobalKey();
+
+  // Foul scatter용 랜덤 오프셋/회전 캐시
+  final _scatterRng = Random();
+  final Map<int, Offset> _scatterOffsets = {};
+  final Map<int, double> _scatterAngles = {};
+
+  Offset _getScatterOffset(int index) {
+    return _scatterOffsets.putIfAbsent(
+      index,
+      () => Offset(
+        _scatterRng.nextDouble() * 40 - 20, // -20 ~ +20
+        _scatterRng.nextDouble() * 30 - 15, // -15 ~ +15
+      ),
+    );
+  }
+
+  double _getScatterAngle(int index) {
+    return _scatterAngles.putIfAbsent(
+      index,
+      () => _scatterRng.nextDouble() * 0.6 - 0.3, // -0.3 ~ +0.3 rad
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant BoardWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Foul 애니메이션 해제 시 scatter 캐시 초기화
+    if (oldWidget.showFoulAnimation && !widget.showFoulAnimation) {
+      _scatterOffsets.clear();
+      _scatterAngles.clear();
+    }
+  }
 
   /// 드롭 Y 좌표 기준으로 가장 가까운 배치 가능한 행을 찾는다.
   String? _findNearestLine(double dropY) {
@@ -116,7 +153,7 @@ class _BoardWidgetState extends State<BoardWidget> {
         }
       },
       builder: (context, candidateData, rejectedData) {
-        return Column(
+        Widget boardContent = Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             _buildLine('Top', widget.board.top, OFCBoard.topMaxCards, 'top',
@@ -127,6 +164,67 @@ class _BoardWidgetState extends State<BoardWidget> {
             const SizedBox(height: 8),
             _buildLine('Bottom', widget.board.bottom,
                 OFCBoard.bottomMaxCards, 'bottom', _bottomKey),
+          ],
+        );
+
+        // Foul 연출: shake + scatter + 빨간 오버레이 + FOUL! 텍스트
+        if (widget.showFoulAnimation) {
+          boardContent = boardContent
+              .animate(onPlay: (c) => c.forward())
+              .shake(hz: 8, offset: const Offset(6, 3), duration: 600.ms);
+        }
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            boardContent,
+            if (widget.showFoulAnimation) ...[
+              // 빨간 flash 오버레이
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  )
+                      .animate(onPlay: (c) => c.forward())
+                      .fadeIn(duration: 200.ms)
+                      .then(delay: 300.ms)
+                      .fadeOut(duration: 500.ms),
+                ),
+              ),
+              // FOUL! 텍스트
+              Positioned.fill(
+                child: Center(
+                  child: Text(
+                    'FOUL!',
+                    style: TextStyle(
+                      color: Colors.red[900],
+                      fontSize: 36,
+                      fontWeight: FontWeight.w900,
+                      shadows: [
+                        Shadow(color: Colors.red, blurRadius: 20),
+                        Shadow(color: Colors.black, blurRadius: 10),
+                      ],
+                    ),
+                  )
+                      .animate(onPlay: (c) => c.forward())
+                      .scale(
+                          begin: const Offset(0, 0),
+                          end: const Offset(1.3, 1.3),
+                          duration: 300.ms,
+                          curve: Curves.easeOut)
+                      .then()
+                      .scale(
+                          end: const Offset(0.77, 0.77),
+                          duration: 200.ms,
+                          curve: Curves.elasticOut)
+                      .then(delay: 500.ms)
+                      .fadeOut(duration: 300.ms),
+                ),
+              ),
+            ],
           ],
         );
       },
@@ -140,10 +238,26 @@ class _BoardWidgetState extends State<BoardWidget> {
         'Bottom (5 cards): Any poker hand. Must be your strongest line.',
   };
 
+  /// 라인별 scatter 인덱스 오프셋 (top=0, mid=3, bottom=8)
+  int _scatterBaseIndex(String lineName) {
+    switch (lineName) {
+      case 'top':
+        return 0;
+      case 'mid':
+        return 3;
+      default:
+        return 8;
+    }
+  }
+
   Widget _buildLine(String label, List<ofc.Card> cards, int maxCards,
       String lineName, GlobalKey lineKey) {
     final canAccept = widget.availableLines.contains(lineName);
-    return Row(
+    final isFoul = widget.showFoulAnimation;
+    // 라인 완성 시 축하 레벨 계산 (foul 시 비활성)
+    final celebLevel = isFoul ? 0 : getCelebrationLevel(cards, lineName);
+
+    Widget lineWidget = Row(
       key: lineKey,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -177,29 +291,92 @@ class _BoardWidgetState extends State<BoardWidget> {
               (i < cards.length &&
                   widget.lineImpactCards.any(
                       (p) => p.card == cards[i] && p.line == lineName));
+
+          // Foul scatter: 카드에 랜덤 오프셋 + 회전 적용
+          Widget slotWidget = LineSlotWidget(
+            // 임팩트 시 key 변경 → 리빌드 + 애니메이션 재생
+            key: isImpact
+                ? ValueKey('impact_${lineName}_$i')
+                : null,
+            card: i < cards.length ? cards[i] : null,
+            lineName: lineName,
+            canAccept: !isFoul && canAccept && i >= cards.length,
+            onCardDropped: (card, sourceLine) => widget.onCardPlaced
+                ?.call(card, lineName, fromLine: sourceLine),
+            isUndoable: !isFoul && isUndoable,
+            isImpact: !isFoul && isImpact,
+            onUndoTap: !isFoul && isUndoable
+                ? () => widget.onUndoCard?.call(cards[i], lineName)
+                : null,
+            faceDown: widget.hideCards || isFoul,
+          );
+
+          if (isFoul && i < cards.length) {
+            final scatterIdx = _scatterBaseIndex(lineName) + i;
+            final offset = _getScatterOffset(scatterIdx);
+            final angle = _getScatterAngle(scatterIdx);
+            slotWidget = TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.0, end: 1.0),
+              duration: const Duration(milliseconds: 500),
+              curve: Curves.easeOut,
+              builder: (context, t, child) {
+                return Transform.translate(
+                  offset: offset * t,
+                  child: Transform.rotate(
+                    angle: angle * t,
+                    child: child,
+                  ),
+                );
+              },
+              child: slotWidget,
+            );
+          }
+
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: LineSlotWidget(
-              // 임팩트 시 key 변경 → 리빌드 + 애니메이션 재생
-              key: isImpact
-                  ? ValueKey('impact_${lineName}_$i')
-                  : null,
-              card: i < cards.length ? cards[i] : null,
-              lineName: lineName,
-              canAccept: canAccept && i >= cards.length,
-              onCardDropped: (card, sourceLine) => widget.onCardPlaced
-                  ?.call(card, lineName, fromLine: sourceLine),
-              isUndoable: isUndoable,
-              isImpact: isImpact,
-              onUndoTap: isUndoable
-                  ? () => widget.onUndoCard?.call(cards[i], lineName)
-                  : null,
-              faceDown: widget.hideCards,
-            ),
+            child: slotWidget,
           );
         }),
       ],
     );
+
+    // Level 1 (Shimmer): 미묘한 shimmer만
+    if (celebLevel == 1) {
+      lineWidget = lineWidget
+          .animate(onPlay: (c) => c.forward())
+          .shimmer(duration: 800.ms, color: Colors.amber.withValues(alpha: 0.4));
+    }
+    // Level 2 (Burst): 강한 scale bounce + amber glow 확산
+    // Level 3 (Explosion): 골든 flash + 큰 scale bounce + shimmer
+    if (celebLevel >= 2) {
+      lineWidget = Container(
+        decoration: BoxDecoration(
+          boxShadow: [
+            BoxShadow(
+              color: Colors.amber.withValues(
+                  alpha: celebLevel == 3 ? 0.8 : 0.4),
+              blurRadius: celebLevel == 3 ? 20 : 12,
+              spreadRadius: celebLevel == 3 ? 4 : 2,
+            ),
+          ],
+        ),
+        child: lineWidget,
+      )
+          .animate(onPlay: (c) => c.forward())
+          .scale(
+            begin: Offset(celebLevel == 3 ? 1.15 : 1.1,
+                celebLevel == 3 ? 1.15 : 1.1),
+            end: const Offset(1.0, 1.0),
+            duration: 500.ms,
+            curve: Curves.elasticOut,
+          )
+          .shimmer(
+            duration: 800.ms,
+            color: Colors.amber.withValues(alpha: 0.5),
+          );
+    }
+
+    return lineWidget;
   }
 
   Widget _buildRoyaltyBadge(List<ofc.Card> cards, String lineName) {
