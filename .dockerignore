@@ -1,0 +1,13 @@
+build/
+.dart_tool/
+.idea/
+.vscode/
+*.iml
+.git/
+android/
+ios/
+linux/
+macos/
+windows/
+test/
+server/node_modules/
