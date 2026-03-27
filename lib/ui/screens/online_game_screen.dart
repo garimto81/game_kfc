@@ -1325,6 +1325,20 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                           final royaltyDiff = detail['royaltyDiff'] as int? ?? 0;
                           final total = detail['total'] as int? ?? 0;
 
+                          // 라인별 로열티 (다이어그램 8-4)
+                          final myRoyalties = data['royalties'] as Map<String, dynamic>? ?? {};
+                          final oppRoyalties = (results[oppId] as Map<String, dynamic>?)?['royalties'] as Map<String, dynamic>? ?? {};
+                          final myRoyaltyTotal = (myRoyalties['total'] as int?) ?? 0;
+                          final oppRoyaltyTotal = (oppRoyalties['total'] as int?) ?? 0;
+
+                          // 라인 점수 합계
+                          int lineScoreSum = 0;
+                          for (final l in ['top', 'mid', 'bottom']) {
+                            if (lines.containsKey(l)) {
+                              lineScoreSum += ((lines[l] as Map<String, dynamic>)['result'] as int?) ?? 0;
+                            }
+                          }
+
                           return Padding(
                             padding: const EdgeInsets.only(left: 8, bottom: 8),
                             child: Column(
@@ -1332,35 +1346,72 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                               children: [
                                 Text('vs $oppName', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                                 const SizedBox(height: 4),
+                                // 라인별 결과 + 로열티
                                 ...['top', 'mid', 'bottom'].where((l) => lines.containsKey(l)).map((l) {
                                   final ld = lines[l] as Map<String, dynamic>;
                                   final result = ld['result'] as int? ?? 0;
                                   final icon = result > 0 ? 'W' : (result < 0 ? 'L' : 'D');
                                   final color = result > 0 ? Colors.green : (result < 0 ? Colors.red : Colors.grey);
+                                  final myR = (myRoyalties[l] as int?) ?? 0;
                                   return Padding(
                                     padding: const EdgeInsets.symmetric(vertical: 1),
                                     child: Row(
                                       children: [
-                                        SizedBox(width: 50, child: Text(l.toUpperCase(), style: const TextStyle(fontSize: 11))),
-                                        Text(ld['myHand'] as String? ?? '', style: const TextStyle(fontSize: 11)),
+                                        SizedBox(width: 46, child: Text(l.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500))),
+                                        Expanded(
+                                          child: Text(ld['myHand'] as String? ?? '', style: const TextStyle(fontSize: 11)),
+                                        ),
                                         const Text(' vs ', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                        Expanded(child: Text(ld['oppHand'] as String? ?? '', style: const TextStyle(fontSize: 11))),
+                                        Expanded(
+                                          child: Text(ld['oppHand'] as String? ?? '', style: const TextStyle(fontSize: 11)),
+                                        ),
                                         Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          width: 20,
+                                          alignment: Alignment.center,
+                                          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                                           decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4)),
                                           child: Text(icon, style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
                                         ),
+                                        if (myR > 0) ...[
+                                          const SizedBox(width: 4),
+                                          Text('${myR}pt', style: TextStyle(fontSize: 10, color: Colors.purple[300], fontWeight: FontWeight.w600)),
+                                        ],
                                       ],
                                     ),
                                   );
                                 }),
                                 const Divider(height: 8),
+                                // 로열티 비교 행 (다이어그램 8-4 스타일)
+                                if (myRoyaltyTotal > 0 || oppRoyaltyTotal > 0)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.star, size: 12, color: Colors.purple[300]),
+                                        const SizedBox(width: 2),
+                                        Text(
+                                          'Royalty $myRoyaltyTotal vs $oppRoyaltyTotal',
+                                          style: TextStyle(fontSize: 11, color: Colors.purple[300]),
+                                        ),
+                                        if (royaltyDiff != 0)
+                                          Text(
+                                            ' (${royaltyDiff > 0 ? "+$royaltyDiff" : "$royaltyDiff"})',
+                                            style: TextStyle(fontSize: 11, color: Colors.purple[300], fontWeight: FontWeight.bold),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                // 점수 분해 공식: Lines ± Scoop ± Royalty = Total
                                 Row(
                                   children: [
-                                    if (scoopBonus != 0) Text('Scoop ${scoopBonus > 0 ? "+$scoopBonus" : "$scoopBonus"}  ', style: TextStyle(fontSize: 11, color: Colors.amber[700])),
-                                    if (royaltyDiff != 0) Text('Royalty ${royaltyDiff > 0 ? "+$royaltyDiff" : "$royaltyDiff"}  ', style: TextStyle(fontSize: 11, color: Colors.purple[300])),
+                                    Text(
+                                      'Lines ${lineScoreSum >= 0 ? "+$lineScoreSum" : "$lineScoreSum"}',
+                                      style: const TextStyle(fontSize: 11, color: Colors.blueGrey),
+                                    ),
+                                    if (scoopBonus != 0) Text('  Scoop ${scoopBonus > 0 ? "+$scoopBonus" : "$scoopBonus"}', style: TextStyle(fontSize: 11, color: Colors.amber[700])),
+                                    if (royaltyDiff != 0) Text('  Roy ${royaltyDiff > 0 ? "+$royaltyDiff" : "$royaltyDiff"}', style: TextStyle(fontSize: 11, color: Colors.purple[300])),
                                     const Spacer(),
-                                    Text('Total: ${total >= 0 ? "+$total" : "$total"}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: total > 0 ? Colors.green : (total < 0 ? Colors.red : null))),
+                                    Text('= ${total >= 0 ? "+$total" : "$total"}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: total > 0 ? Colors.green : (total < 0 ? Colors.red : null))),
                                   ],
                                 ),
                               ],
