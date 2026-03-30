@@ -208,8 +208,9 @@ export async function placeBotCardsUI(
   round: number,
   isFantasyland: boolean
 ): Promise<void> {
-  const handCardSelector = '[aria-label^="hand-card-"]';
-  const boardLineSelector = (line: string) => `[aria-label="board-line-${line}"]`;
+  const P = 'css=pierce/';
+  const handCardSelector = `${P}flt-semantics[aria-label^="hand-card-"]`;
+  const boardLineSelector = (line: string) => `${P}flt-semantics[aria-label="board-line-${line}"]`;
 
   // 핸드 카드가 보일 때까지 대기
   try {
@@ -246,7 +247,7 @@ export async function placeBotCardsUI(
       await page.waitForTimeout(200);
     }
     // 나머지 1장 디스카드
-    const discardBtn = page.getByText('Discard');
+    const discardBtn = page.locator(`${P}flt-semantics[aria-label*="discard" i]`);
     if (await page.locator(handCardSelector).count() > 0) {
       await page.locator(handCardSelector).first().click();
       await page.waitForTimeout(200);
@@ -287,7 +288,7 @@ export async function placeBotCardsUI(
     if ((await remaining.count()) > 0) {
       await remaining.first().click();
       await page.waitForTimeout(200);
-      const discardBtn = page.getByText('Discard');
+      const discardBtn = page.locator(`${P}flt-semantics[aria-label*="discard" i]`);
       if (await discardBtn.isVisible()) {
         await discardBtn.click();
       }
@@ -295,7 +296,7 @@ export async function placeBotCardsUI(
   }
 
   // Confirm 클릭
-  const confirmBtn = page.locator('[aria-label="confirm-button"]');
+  const confirmBtn = page.locator(`${P}flt-semantics[aria-label="confirm-button"]`);
   if (await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
     await confirmBtn.click();
   }

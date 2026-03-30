@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/settings_provider.dart';
 import 'ui/screens/home_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Semantics 트리 강제 활성화 — CanvasKit에서도 flt-semantics DOM 요소 생성
+  SemanticsBinding.instance.ensureSemantics();
+
   runApp(const ProviderScope(child: OFCApp()));
 }
 

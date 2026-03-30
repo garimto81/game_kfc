@@ -73,8 +73,29 @@ async function playRound5(player: PlayerHandle): Promise<void> {
 }
 
 /**
+ * Shadow DOM 내부의 flt-semantics 요소를 찾는 헬퍼 (page.evaluate용)
+ * flutter-view shadowRoot를 관통하여 aria-label로 요소를 찾는다
+ */
+function getSemanticsQueryScript(ariaLabelSelector: string): string {
+  return `
+    (() => {
+      const fv = document.querySelector('flutter-view');
+      if (fv && fv.shadowRoot) {
+        return fv.shadowRoot.querySelector('${ariaLabelSelector}');
+      }
+      const gp = document.querySelector('flt-glass-pane');
+      if (gp && gp.shadowRoot) {
+        return gp.shadowRoot.querySelector('${ariaLabelSelector}');
+      }
+      return document.querySelector('${ariaLabelSelector}');
+    })()
+  `;
+}
+
+/**
  * WS fallback: page.evaluate로 직접 WS 메시지 전송
  * UI 조작이 불가능할 경우 사용
+ * CanvasKit: shadow DOM 내부의 flt-semantics 요소에 접근
  */
 async function wsFallbackPlaceCards(
   player: PlayerHandle,
@@ -99,14 +120,22 @@ async function wsFallbackPlaceCards(
 
     for (const p of placements) {
       await player.page.evaluate(
-        ({ card, line }) => {
-          // Flutter Web 내부 WS에 직접 접근 불가 — DOM 이벤트로 시뮬레이션
-          const cardEl = document.querySelector(`[aria-label^="hand-card-"]`);
-          const lineEl = document.querySelector(`[aria-label="board-line-${line}"]`);
+        ({ line }) => {
+          // CanvasKit: shadow DOM 관통하여 flt-semantics 접근
+          const root =
+            document.querySelector('flutter-view')?.shadowRoot ??
+            document.querySelector('flt-glass-pane')?.shadowRoot ??
+            document;
+          const cardEl = root.querySelector(
+            'flt-semantics[aria-label^="hand-card-"]'
+          );
+          const lineEl = root.querySelector(
+            `flt-semantics[aria-label="board-line-${line}"]`
+          );
           if (cardEl) (cardEl as HTMLElement).click();
           if (lineEl) (lineEl as HTMLElement).click();
         },
-        { card: p.card, line: p.line }
+        { line: p.line }
       );
       await player.page.waitForTimeout(400);
     }
@@ -116,8 +145,16 @@ async function wsFallbackPlaceCards(
       const line = i === 0 ? 'bottom' : 'mid';
       await player.page.evaluate(
         ({ line }) => {
-          const cardEl = document.querySelector(`[aria-label^="hand-card-"]`);
-          const lineEl = document.querySelector(`[aria-label="board-line-${line}"]`);
+          const root =
+            document.querySelector('flutter-view')?.shadowRoot ??
+            document.querySelector('flt-glass-pane')?.shadowRoot ??
+            document;
+          const cardEl = root.querySelector(
+            'flt-semantics[aria-label^="hand-card-"]'
+          );
+          const lineEl = root.querySelector(
+            `flt-semantics[aria-label="board-line-${line}"]`
+          );
           if (cardEl) (cardEl as HTMLElement).click();
           if (lineEl) (lineEl as HTMLElement).click();
         },
@@ -127,12 +164,17 @@ async function wsFallbackPlaceCards(
     }
     // 디스카드
     await player.page.evaluate(() => {
-      const cardEl = document.querySelector(`[aria-label^="hand-card-"]`);
+      const root =
+        document.querySelector('flutter-view')?.shadowRoot ??
+        document.querySelector('flt-glass-pane')?.shadowRoot ??
+        document;
+      const cardEl = root.querySelector(
+        'flt-semantics[aria-label^="hand-card-"]'
+      );
       if (cardEl) (cardEl as HTMLElement).click();
-      const discardBtn = document.querySelector(`[aria-label*="discard"]`) ||
-        Array.from(document.querySelectorAll('flt-semantics')).find(
-          el => el.textContent?.includes('Discard')
-        );
+      const discardBtn = root.querySelector(
+        'flt-semantics[aria-label*="discard"]'
+      );
       if (discardBtn) (discardBtn as HTMLElement).click();
     });
     await player.page.waitForTimeout(400);
