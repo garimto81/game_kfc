@@ -50,44 +50,41 @@ test.describe('08 — Foul Detection (WS Hybrid)', () => {
     const activePlayers = 2;
 
     // ── R1~R5: FoulPlayer는 역순 배치, CleanPlayer는 정상 배치 ──
+    // 모든 클라이언트가 동시에 dealCards 대기
     for (let round = 1; round <= 5; round++) {
-      for (const client of wsClients) {
-        try {
-          const dealMsg = await client.waitFor('dealCards', 15000);
-          const cards = dealMsg.payload.cards as Card[];
-          const dealRound = dealMsg.payload.round as number;
-          const isFL = dealMsg.payload.inFantasyland === true;
-          const board = extractBoard(client);
+      await Promise.all(wsClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
+        const cards = dealMsg.payload.cards as Card[];
+        const dealRound = dealMsg.payload.round as number;
+        const isFL = dealMsg.payload.inFantasyland === true;
+        const board = extractBoard(client);
 
-          if (client === players[0].ws && dealRound === 1) {
-            // FoulPlayer R1: 역순 배치 (낮은 카드 → bottom, 높은 → top)
-            const sorted = [...cards].sort((a, b) => a.rank - b.rank); // 오름차순
-            const placements = [
-              { card: sorted[0], line: 'bottom' as const },
-              { card: sorted[1], line: 'bottom' as const },
-              { card: sorted[2], line: 'mid' as const },
-              { card: sorted[3], line: 'mid' as const },
-              { card: sorted[4], line: 'top' as const },
-            ];
-            for (const p of placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            client.send('confirmPlacement');
-          } else {
-            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-            for (const p of decision.placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            if (decision.discard) {
-              client.send('discardCard', { card: decision.discard });
-            }
-            client.send('confirmPlacement');
+        if (client === players[0].ws && dealRound === 1) {
+          // FoulPlayer R1: 역순 배치 (낮은 카드 → bottom, 높은 → top)
+          const sorted = [...cards].sort((a, b) => a.rank - b.rank); // 오름차순
+          const placements = [
+            { card: sorted[0], line: 'bottom' as const },
+            { card: sorted[1], line: 'bottom' as const },
+            { card: sorted[2], line: 'mid' as const },
+            { card: sorted[3], line: 'mid' as const },
+            { card: sorted[4], line: 'top' as const },
+          ];
+          for (const p of placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
           }
-          break;
-        } catch {
-          continue;
+        } else {
+          const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+          for (const p of decision.placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
+          }
+          if (decision.discard) {
+            client.send('discardCard', { card: decision.discard });
+          }
         }
-      }
+        await sleep(200);
+        client.send('confirmPlacement');
+        await sleep(500);
+      }));
     }
 
     await screenshotManager.captureAll(allPages, '08-FOUL-SETUP', 'Foul 유도 배치');

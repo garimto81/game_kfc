@@ -54,42 +54,39 @@ test.describe('07 — Fantasyland (WS Hybrid)', () => {
     const activePlayers = 2;
 
     for (let round = 1; round <= 5; round++) {
-      for (const client of wsClients) {
-        try {
-          const dealMsg = await client.waitFor('dealCards', 15000);
-          const cards = dealMsg.payload.cards as Card[];
-          const dealRound = dealMsg.payload.round as number;
-          const isFL = dealMsg.payload.inFantasyland === true;
-          const board = extractBoard(client);
+      await Promise.all(wsClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
+        const cards = dealMsg.payload.cards as Card[];
+        const dealRound = dealMsg.payload.round as number;
+        const isFL = dealMsg.payload.inFantasyland === true;
+        const board = extractBoard(client);
 
-          if (client === players[0].ws && dealRound === 1) {
-            // FLPlayer R1: top에 가장 높은 카드 배치 (FL 유도)
-            const sorted = [...cards].sort((a, b) => b.rank - a.rank);
-            const placements = [
-              { card: sorted[0], line: 'top' as const },
-              { card: sorted[1], line: 'bottom' as const },
-              { card: sorted[2], line: 'bottom' as const },
-              { card: sorted[3], line: 'mid' as const },
-              { card: sorted[4], line: 'mid' as const },
-            ];
-            for (const p of placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-          } else {
-            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-            for (const p of decision.placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            if (decision.discard) {
-              client.send('discardCard', { card: decision.discard });
-            }
+        if (client === players[0].ws && dealRound === 1) {
+          // FLPlayer R1: top에 가장 높은 카드 배치 (FL 유도)
+          const sorted = [...cards].sort((a, b) => b.rank - a.rank);
+          const placements = [
+            { card: sorted[0], line: 'top' as const },
+            { card: sorted[1], line: 'bottom' as const },
+            { card: sorted[2], line: 'bottom' as const },
+            { card: sorted[3], line: 'mid' as const },
+            { card: sorted[4], line: 'mid' as const },
+          ];
+          for (const p of placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
           }
-          client.send('confirmPlacement');
-          break;
-        } catch {
-          continue;
+        } else {
+          const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+          for (const p of decision.placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
+          }
+          if (decision.discard) {
+            client.send('discardCard', { card: decision.discard });
+          }
         }
-      }
+        await sleep(200);
+        client.send('confirmPlacement');
+        await sleep(500);
+      }));
     }
 
     await sleep(1500);

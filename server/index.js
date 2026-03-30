@@ -398,10 +398,10 @@ function handleStartGame(room, playerId) {
   startGameAfterDealer(room);
 }
 
-function startGameAfterDealer(room) {
+function startGameAfterDealer(room, foldedPlayerIds = []) {
   room.phase = 'playing';
   room.handNumber = 1;
-  const handResult = room.startNewHand();
+  const handResult = room.startNewHand(foldedPlayerIds);
 
   room.onTurnTimeout = (timedOutPlayerId, turnResult) => {
     handleTurnResult(room, turnResult, timedOutPlayerId);
@@ -616,8 +616,12 @@ function handlePlayOrFoldResponse(room, playerId, payload) {
       choices: result.choices,
       activePlayers: result.activePlayers
     });
-    // 게임 시작
-    startGameAfterDealer(room);
+    // fold 상태를 startNewHand에 전달
+    const foldedIds = Object.entries(result.choices)
+      .filter(([_, choice]) => choice === 'fold')
+      .map(([id]) => id);
+    // 게임 시작 (foldedIds 전달)
+    startGameAfterDealer(room, foldedIds);
   } else {
     // 진행 중 — 전체에게 업데이트
     room.broadcast('playOrFoldUpdate', {

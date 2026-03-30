@@ -66,8 +66,9 @@ test.describe('02 — 2-Player Full Game (WS Hybrid)', () => {
     const activePlayers = 2;
 
     for (let round = 1; round <= 5; round++) {
-      for (const client of wsClients) {
-        const dealMsg = await client.waitFor('dealCards');
+      // 모든 클라이언트가 동시에 dealCards를 대기 (서버 턴 순서와 무관)
+      await Promise.all(wsClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
         const cards = dealMsg.payload.cards;
         const dealRound = dealMsg.payload.round;
         const isFL = dealMsg.payload.inFantasyland === true;
@@ -86,8 +87,10 @@ test.describe('02 — 2-Player Full Game (WS Hybrid)', () => {
         if (decision.discard) {
           client.send('discardCard', { card: decision.discard });
         }
+        await sleep(200);
         client.send('confirmPlacement');
-      }
+        await sleep(500);
+      }));
 
       // Flutter 앱이 상태 반영할 시간
       await sleep(1500);

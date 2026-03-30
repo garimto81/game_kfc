@@ -50,67 +50,39 @@ test.describe('04 — 4-Player Game (WS Hybrid)', () => {
 
     const activePlayers = 4;
 
-    // ── R1~R4 ──
-    for (let round = 1; round <= 4; round++) {
-      for (let turn = 0; turn < activePlayers; turn++) {
-        for (const client of wsClients) {
-          try {
-            const dealMsg = await client.waitFor('dealCards', 15000);
-            const cards = dealMsg.payload.cards;
-            const dealRound = dealMsg.payload.round as number;
-            const isFL = dealMsg.payload.inFantasyland === true;
-            const board = extractBoard(client);
-            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-            for (const p of decision.placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            if (decision.discard) {
-              client.send('discardCard', { card: decision.discard });
-            }
-            client.send('confirmPlacement');
-            break;
-          } catch {
-            continue;
-          }
+    // ── R1~R5: 모든 클라이언트가 동시에 dealCards 대기 ──
+    for (let round = 1; round <= 5; round++) {
+      await Promise.all(wsClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
+        const cards = dealMsg.payload.cards;
+        const dealRound = dealMsg.payload.round as number;
+        const isFL = dealMsg.payload.inFantasyland === true;
+
+        // 4인 R5: 2장 확인
+        if (dealRound === 5) {
+          expect(cards.length).toBe(2);
         }
-      }
+
+        const board = extractBoard(client);
+        const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+        for (const p of decision.placements) {
+          client.send('placeCard', { card: p.card, line: p.line });
+        }
+        if (decision.discard) {
+          client.send('discardCard', { card: decision.discard });
+        }
+        await sleep(200);
+        client.send('confirmPlacement');
+        await sleep(500);
+      }));
 
       await sleep(1000);
-      await screenshotManager.captureAll(allPages, `04-R${round}-DEAL`, `4인 R${round}`);
-    }
-
-    // ── R5: 4인 → 2장 딜 (디스카드 없음) ──
-    for (let turn = 0; turn < activePlayers; turn++) {
-      for (const client of wsClients) {
-        try {
-          const dealMsg = await client.waitFor('dealCards', 15000);
-          const cards = dealMsg.payload.cards;
-          const dealRound = dealMsg.payload.round as number;
-
-          // 4인 R5: 2장 확인
-          if (dealRound === 5) {
-            expect(cards.length).toBe(2);
-          }
-
-          const board = extractBoard(client);
-          const decision = decidePlacement(cards, board, dealRound, false, activePlayers);
-          for (const p of decision.placements) {
-            client.send('placeCard', { card: p.card, line: p.line });
-          }
-          // R5 4인: discard 없음
-          if (decision.discard) {
-            client.send('discardCard', { card: decision.discard });
-          }
-          client.send('confirmPlacement');
-          break;
-        } catch {
-          continue;
-        }
+      if (round === 5) {
+        await screenshotManager.captureAll(allPages, '04-R5-DEAL', 'R5 2장 딜 (4인)');
+      } else {
+        await screenshotManager.captureAll(allPages, `04-R${round}-DEAL`, `4인 R${round}`);
       }
     }
-
-    await sleep(1000);
-    await screenshotManager.captureAll(allPages, '04-R5-DEAL', 'R5 2장 딜 (4인)');
 
     // ── handScored 수신 ──
     const scoreMsg = await players[0].ws.waitFor('handScored', 30000);

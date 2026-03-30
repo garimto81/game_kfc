@@ -342,21 +342,22 @@ class Room {
   /**
    * 새 핸드 시작
    */
-  startNewHand() {
+  startNewHand(foldedPlayerIds = []) {
     this.deck = shuffle(createDeck());
     this.discardPile = [];
     this.round = 1;
     this.readyPlayers.clear();
 
     // 모든 플레이어 상태 초기화
-    for (const player of this.players.values()) {
+    for (const [playerId, player] of this.players) {
       player.hand = [];
       player.board = { top: [], mid: [], bottom: [] };
       player.discarded = [];
       player.placed = [];
       player.confirmed = false;
       player.fouled = false;
-      player.folded = false;
+      // Play/Fold에서 fold된 플레이어는 folded 상태 유지
+      player.folded = foldedPlayerIds.includes(playerId);
     }
 
     // 턴 순서 설정 (Fantasyland 플레이어 제외)

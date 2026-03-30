@@ -5,7 +5,7 @@
  * WS: 게임 조작
  *
  * 핵심 검증:
- * - 6인 Play/Fold: P1~P4 play, P5~P6 fold
+ * - 6인 Play/Fold: 4명 play, 2명 auto-fold
  * - 2명 fold 후 4인 활성 게임 진행
  */
 import { test, expect } from '../fixtures/multi-player';
@@ -47,70 +47,67 @@ test.describe('06 — 6-Player Play/Fold (WS Hybrid)', () => {
     await sleep(1500);
     await screenshotManager.captureAll(allPages, '06-PF-6P', '6인 Play/Fold 시작');
 
-    // ── Play/Fold 응답: P1~P4 Play, P5~P6 Fold ──
-    for (let i = 0; i < 6; i++) {
+    // ── Play/Fold 응답: 모든 플레이어가 'play' 응답 ──
+    // 서버가 4명 play 확보 후 나머지 auto-fold
+    await Promise.all(players.map(async (p) => {
       try {
-        await players[i].ws.waitFor('playOrFoldRequest', 15000);
-        const choice = i < 4 ? 'play' : 'fold';
-        players[i].ws.send('playOrFoldResponse', { choice });
-        await sleep(500);
+        await p.ws.waitFor('playOrFoldRequest', 20000);
+        p.ws.send('playOrFoldResponse', { choice: 'play' });
       } catch {
-        // 이 플레이어 차례가 아님
+        // auto-fold된 플레이어에게는 request가 오지 않음
       }
-    }
+    }));
 
     // playOrFoldResult 대기
     const pfResult = await players[0].ws.waitFor('playOrFoldResult', 15000);
     expect(pfResult.payload.activePlayers).toBeTruthy();
 
+    // activePlayers 목록에서 실제 active 클라이언트 결정
+    const activePlayerIds: string[] = pfResult.payload.activePlayers;
+
     await sleep(2000);
     await screenshotManager.captureAll(allPages, '06-PF-4PLAY-2FOLD', '4명 Play + 2명 Fold');
 
-    // Fold된 P5, P6 스크린샷
-    await screenshotManager.captureAll(
-      [
-        { page: players[4].page, playerName: 'P5' },
-        { page: players[5].page, playerName: 'P6' },
-      ],
-      '06-FOLD-VIEWS',
-      'Fold된 P5, P6'
-    );
-
-    // ── gameStart 대기 ──
-    for (const p of players) {
-      await p.ws.waitFor('gameStart');
+    // Fold된 플레이어 스크린샷
+    const foldedPages = players.filter(p => !activePlayerIds.includes(p.ws.playerId!));
+    if (foldedPages.length > 0) {
+      await screenshotManager.captureAll(
+        foldedPages.map(p => ({ page: p.page, playerName: p.name })),
+        '06-FOLD-VIEWS',
+        'Fold된 플레이어들'
+      );
     }
 
-    const activeClients = players.slice(0, 4).map((p) => p.ws);
-    const activePlayers = 4;
+    // ── gameStart 대기 ──
+    await Promise.all(players.map(p => p.ws.waitFor('gameStart')));
+
+    const activeClients = players
+      .filter(p => activePlayerIds.includes(p.ws.playerId!))
+      .map(p => p.ws);
+    const activePlayers = activeClients.length;
 
     await sleep(2000);
     await screenshotManager.captureAll(allPages, '06-GAME-4ACTIVE', '4인 활성 게임');
 
-    // ── R1~R5 ──
+    // ── R1~R5: 활성 클라이언트가 동시에 dealCards 대기 ──
     for (let round = 1; round <= 5; round++) {
-      for (let turn = 0; turn < activePlayers; turn++) {
-        for (const client of activeClients) {
-          try {
-            const dealMsg = await client.waitFor('dealCards', 15000);
-            const cards = dealMsg.payload.cards;
-            const dealRound = dealMsg.payload.round as number;
-            const isFL = dealMsg.payload.inFantasyland === true;
-            const board = extractBoard(client);
-            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-            for (const p of decision.placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            if (decision.discard) {
-              client.send('discardCard', { card: decision.discard });
-            }
-            client.send('confirmPlacement');
-            break;
-          } catch {
-            continue;
-          }
+      await Promise.all(activeClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
+        const cards = dealMsg.payload.cards;
+        const dealRound = dealMsg.payload.round as number;
+        const isFL = dealMsg.payload.inFantasyland === true;
+        const board = extractBoard(client);
+        const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+        for (const p of decision.placements) {
+          client.send('placeCard', { card: p.card, line: p.line });
         }
-      }
+        if (decision.discard) {
+          client.send('discardCard', { card: decision.discard });
+        }
+        await sleep(200);
+        client.send('confirmPlacement');
+        await sleep(500);
+      }));
       await sleep(1000);
     }
 

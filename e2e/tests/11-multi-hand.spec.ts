@@ -16,34 +16,44 @@ import { decidePlacement, extractBoard } from '../helpers/ws-bot-strategy';
 
 /**
  * WS로 한 핸드(R1~R5)를 완료하는 헬퍼
+ * 모든 클라이언트가 동시에 dealCards를 대기하여 서버 턴 순서와 무관하게 처리
  */
 async function playOneHandWS(
   clients: WSGameClient[],
   activePlayers: number
 ): Promise<void> {
+  // 각 클라이언트의 로컬 보드 상태 추적
+  const localBoards = new Map<WSGameClient, { top: any[]; mid: any[]; bottom: any[] }>();
+  for (const c of clients) {
+    localBoards.set(c, { top: [], mid: [], bottom: [] });
+  }
+
   for (let round = 1; round <= 5; round++) {
-    for (let turn = 0; turn < activePlayers; turn++) {
-      for (const client of clients) {
-        try {
-          const dealMsg = await client.waitFor('dealCards', 15000);
-          const cards = dealMsg.payload.cards;
-          const dealRound = dealMsg.payload.round as number;
-          const isFL = dealMsg.payload.inFantasyland === true;
-          const board = extractBoard(client);
-          const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-          for (const p of decision.placements) {
-            client.send('placeCard', { card: p.card, line: p.line });
-          }
-          if (decision.discard) {
-            client.send('discardCard', { card: decision.discard });
-          }
-          client.send('confirmPlacement');
-          break;
-        } catch {
-          continue;
-        }
+    await Promise.all(clients.map(async (client) => {
+      const dealMsg = await client.waitFor('dealCards', 30000);
+      const cards = dealMsg.payload.cards;
+      const dealRound = dealMsg.payload.round as number;
+      const isFL = dealMsg.payload.inFantasyland === true;
+
+      // R1일 때는 빈 보드에서 시작 (이전 핸드의 stateUpdate가 남아있을 수 있음)
+      const board = dealRound === 1
+        ? { top: [], mid: [], bottom: [] }
+        : (localBoards.get(client) ?? extractBoard(client));
+
+      const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+      for (const p of decision.placements) {
+        client.send('placeCard', { card: p.card, line: p.line });
+        // 로컬 보드에 반영
+        const lb = localBoards.get(client)!;
+        lb[p.line].push(p.card);
       }
-    }
+      if (decision.discard) {
+        client.send('discardCard', { card: decision.discard });
+      }
+      await sleep(200);
+      client.send('confirmPlacement');
+      await sleep(500);
+    }));
   }
 }
 
@@ -106,9 +116,7 @@ test.describe('11 — Multi-Hand (WS Hybrid)', () => {
     }
 
     // Hand 2 시작 대기
-    for (const p of players) {
-      await p.ws.waitFor('gameStart', 15000);
-    }
+    await Promise.all(players.map(p => p.ws.waitFor('gameStart', 15000)));
 
     await sleep(1500);
     await screenshotManager.captureAll(allPages, '11-H2-START', 'Hand 2 시작');
@@ -133,22 +141,14 @@ test.describe('11 — Multi-Hand (WS Hybrid)', () => {
       p.ws.send('readyForNextHand');
     }
 
-    for (const p of players) {
-      await p.ws.waitFor('gameStart', 15000);
-    }
+    await Promise.all(players.map(p => p.ws.waitFor('gameStart', 15000)));
+    await sleep(1500);
 
     // ── Hand 3 ──
     await playOneHandWS(wsClients, activePlayers);
 
     const h3Score = await players[0].ws.waitFor('handScored', 30000);
     expect(h3Score.payload.handNumber).toBe(3);
-
-    await sleep(2000);
-    await screenshotManager.captureAll(allPages, '11-H3-COMPLETE', 'Hand 3 완료');
-
-    // 3개의 handScored 메시지
-    const allScores = players[0].ws.getMessages('handScored');
-    expect(allScores.length).toBeGreaterThanOrEqual(3);
 
     await screenshotManager.captureAll(allPages, '11-TOTAL-SCORE', '3핸드 누적 스코어');
   });

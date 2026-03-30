@@ -5,7 +5,7 @@
  * WS: 게임 조작 (joinRequest, playOrFoldResponse, placeCard 등)
  *
  * 5인+ 게임에서 Play/Fold 단계가 발생하며,
- * P1~P4 Play, P5 Fold 후 4인 활성 게임을 진행한다.
+ * 4명 Play 후 4인 활성 게임을 진행한다.
  */
 import { test, expect } from '../fixtures/multi-player';
 import { connectToServer } from '../helpers/game-actions';
@@ -50,27 +50,19 @@ test.describe('05 — 5-Player Play/Fold (WS Hybrid)', () => {
     await screenshotManager.captureAll(allPages, '05-PF-REQUEST', 'Play/Fold 시작');
 
     // ── WS: Play/Fold 응답 ──
-    // 5인+ 게임: 서버가 순차적으로 playOrFoldRequest 전송
-    // P1~P4는 Play, P5는 Fold
-
-    for (let i = 0; i < 5; i++) {
-      const client = players[i].ws;
-      // playOrFoldRequest가 오면 응답
+    // 모든 플레이어가 동시에 대기, 자기 request를 받으면 'play' 응답
+    // 서버가 4명 play 확보 후 나머지 auto-fold
+    await Promise.all(players.map(async (p) => {
       try {
-        await client.waitFor('playOrFoldRequest', 15000);
-        const choice = i < 4 ? 'play' : 'fold';
-        client.send('playOrFoldResponse', { choice });
-
-        await sleep(500);
-        await screenshotManager.captureAll(
-          allPages,
-          `05-PF-CHOICE${i + 1}`,
-          `${players[i].name} ${i < 4 ? 'Play' : 'Fold'} 선택`
-        );
+        await p.ws.waitFor('playOrFoldRequest', 20000);
+        p.ws.send('playOrFoldResponse', { choice: 'play' });
       } catch {
-        // 이 플레이어의 차례가 아닐 수 있음
+        // auto-fold된 플레이어에게는 request가 오지 않음
       }
-    }
+    }));
+
+    await sleep(1000);
+    await screenshotManager.captureAll(allPages, '05-PF-CHOICES', 'Play/Fold 선택 완료');
 
     // playOrFoldResult 대기
     const pfResult = await players[0].ws.waitFor('playOrFoldResult', 15000);
@@ -79,48 +71,48 @@ test.describe('05 — 5-Player Play/Fold (WS Hybrid)', () => {
     await sleep(2000);
     await screenshotManager.captureAll(allPages, '05-PF-RESULT', 'Play/Fold 결과');
 
-    // ── Folded P5 스크린샷 ──
-    await screenshotManager.captureAll(
-      [{ page: players[4].page, playerName: 'P5' }],
-      '05-FOLDED-VIEW',
-      'Fold된 P5 화면'
-    );
-
     // ── gameStart 대기 (Play/Fold 후 게임 시작) ──
-    for (const p of players) {
-      await p.ws.waitFor('gameStart');
-    }
+    await Promise.all(players.map(p => p.ws.waitFor('gameStart')));
 
-    const activeClients = players.slice(0, 4).map((p) => p.ws);
-    const activePlayers = 4;
+    // activePlayers 목록에서 실제 active 클라이언트 결정
+    const activePlayerIds: string[] = pfResult.payload.activePlayers;
+    const wsClients = players.map(p => p.ws);
+    const activeClients = wsClients.filter(c => activePlayerIds.includes(c.playerId!));
+    const activePlayers = activeClients.length;
+
+    // Folded 플레이어 스크린샷
+    const foldedClients = wsClients.filter(c => !activePlayerIds.includes(c.playerId!));
+    const foldedPages = players.filter(p => !activePlayerIds.includes(p.ws.playerId!));
+    if (foldedPages.length > 0) {
+      await screenshotManager.captureAll(
+        foldedPages.map(p => ({ page: p.page, playerName: p.name })),
+        '05-FOLDED-VIEW',
+        'Fold된 플레이어 화면'
+      );
+    }
 
     await sleep(2000);
     await screenshotManager.captureAll(allPages, '05-GAME-4ACTIVE', '4인 활성 게임');
 
-    // ── R1~R5: 4인 활성 플레이어만 카드 배치 ──
+    // ── R1~R5: 활성 플레이어가 동시에 dealCards 대기 ──
     for (let round = 1; round <= 5; round++) {
-      for (let turn = 0; turn < activePlayers; turn++) {
-        for (const client of activeClients) {
-          try {
-            const dealMsg = await client.waitFor('dealCards', 15000);
-            const cards = dealMsg.payload.cards;
-            const dealRound = dealMsg.payload.round as number;
-            const isFL = dealMsg.payload.inFantasyland === true;
-            const board = extractBoard(client);
-            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-            for (const p of decision.placements) {
-              client.send('placeCard', { card: p.card, line: p.line });
-            }
-            if (decision.discard) {
-              client.send('discardCard', { card: decision.discard });
-            }
-            client.send('confirmPlacement');
-            break;
-          } catch {
-            continue;
-          }
+      await Promise.all(activeClients.map(async (client) => {
+        const dealMsg = await client.waitFor('dealCards', 30000);
+        const cards = dealMsg.payload.cards;
+        const dealRound = dealMsg.payload.round as number;
+        const isFL = dealMsg.payload.inFantasyland === true;
+        const board = extractBoard(client);
+        const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+        for (const p of decision.placements) {
+          client.send('placeCard', { card: p.card, line: p.line });
         }
-      }
+        if (decision.discard) {
+          client.send('discardCard', { card: decision.discard });
+        }
+        await sleep(200);
+        client.send('confirmPlacement');
+        await sleep(500);
+      }));
 
       await sleep(1000);
     }
@@ -131,10 +123,10 @@ test.describe('05 — 5-Player Play/Fold (WS Hybrid)', () => {
 
     // Fold 플레이어 점수 확인
     const results = scoreMsg.payload.results;
-    const p5Id = players[4].ws.playerId;
-    if (p5Id && results[p5Id]) {
-      // Fold 플레이어는 scooped 또는 score === 특정 값
-      expect(results[p5Id].folded ?? results[p5Id].scooped).toBeTruthy();
+    for (const fc of foldedClients) {
+      if (fc.playerId && results[fc.playerId]) {
+        expect(results[fc.playerId].folded ?? results[fc.playerId].scooped).toBeTruthy();
+      }
     }
 
     // zero-sum 검증
