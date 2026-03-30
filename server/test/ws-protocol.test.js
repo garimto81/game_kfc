@@ -293,36 +293,45 @@ function verifyInvariants(label, playerHandles, scoredResults, handNumber) {
     console.log('    [OK] INV3: Foul consistency');
   }
 
-  // ── 불변식 4: 카드 52장 고유성 ──
+  // ── 불변식 4: 카드 고유성 (라운드별) ──
+  // 4인+ 게임에서 discardPile 재활용으로 같은 카드가 다른 라운드에서 재등장 가능 (정상)
+  // 핵심 검증: "같은 라운드에서 같은 카드가 2명에게 동시에 딜되지 않음"
   {
-    const allCards = [];
-    // dealCards 메시지에서 수집 (handNumber 필터링)
+    // 라운드별 카드 수집
+    const roundCards = {}; // round -> [{card, playerId}]
     for (const p of playerHandles) {
       const dealMsgs = p.getMsg('dealCards');
       for (const dm of dealMsgs) {
-        if (dm.payload && dm.payload.cards) {
-          // handNumber가 지정되면 해당 핸드만 수집
-          if (handNumber !== undefined && dm.payload.handNumber !== handNumber) continue;
-          for (const c of dm.payload.cards) {
-            allCards.push(c);
-          }
+        if (!dm.payload || !dm.payload.cards) continue;
+        if (handNumber !== undefined && dm.payload.handNumber !== handNumber) continue;
+        const round = dm.payload.round;
+        if (!roundCards[round]) roundCards[round] = [];
+        for (const c of dm.payload.cards) {
+          roundCards[round].push({ card: c, player: p.playerName });
         }
       }
     }
-    // 카드 고유성 (rank+suit 조합)
-    const cardSet = new Set();
-    for (const c of allCards) {
-      const key = `${c.rank}-${c.suit}`;
-      cardSet.add(key);
+    // 라운드별 중복 검증
+    for (const [round, cards] of Object.entries(roundCards)) {
+      const cardSet = new Set();
+      for (const { card, player } of cards) {
+        const key = `${card.rank}-${card.suit}`;
+        assert(!cardSet.has(key), `INV4 Round ${round}: card ${key} dealt to multiple players`);
+        cardSet.add(key);
+      }
     }
-    // 중복 카드 검증: 전체 카드 수 = 고유 카드 수
-    assert(allCards.length === cardSet.size, `INV4 Duplicate cards detected: total=${allCards.length}, unique=${cardSet.size}`);
-    // rank 2~14, suit 1~4 범위 검증
-    for (const c of allCards) {
-      assert(c.rank >= 2 && c.rank <= 14, `INV4 Invalid rank: ${c.rank}`);
-      assert(c.suit >= 1 && c.suit <= 4, `INV4 Invalid suit: ${c.suit}`);
+    // 전체 고유 카드 종류 <= 52
+    const allCardKeys = new Set();
+    for (const cards of Object.values(roundCards)) {
+      for (const { card } of cards) {
+        allCardKeys.add(`${card.rank}-${card.suit}`);
+        assert(card.rank >= 2 && card.rank <= 14, `INV4 Invalid rank: ${card.rank}`);
+        assert(card.suit >= 1 && card.suit <= 4, `INV4 Invalid suit: ${card.suit}`);
+      }
     }
-    console.log(`    [OK] INV4: Card uniqueness (${allCards.length} cards, ${cardSet.size} unique)`);
+    assert(allCardKeys.size <= 52, `INV4 More than 52 unique card types: ${allCardKeys.size}`);
+    const totalCards = Object.values(roundCards).reduce((sum, cards) => sum + cards.length, 0);
+    console.log(`    [OK] INV4: Card uniqueness (${totalCards} cards, ${allCardKeys.size} unique, ${Object.keys(roundCards).length} rounds)`);
   }
 
   // ── 불변식 5: 보드 완성도 ──
