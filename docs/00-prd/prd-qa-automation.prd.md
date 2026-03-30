@@ -77,6 +77,8 @@
 | 5인 보드 미완성 버그 | 발견 | — | Play/Fold 활성 플레이어 |
 | CI/CD 파이프라인 통합 | 예정 | — | GitHub Actions |
 | Dart smart_ai.dart | 예정 | — | 클라이언트 사이드 AI |
+| 자동 검증→수정 워크플로우 | 예정 | — | Detect→Fix→Verify 파이프라인 |
+| npm qa scripts 추가 | 예정 | — | qa, qa:ws, qa:soak, qa:full |
 
 ## 커버리지 현황
 
@@ -89,6 +91,115 @@
 | L5 | 상호작용 | 0% | 50% | 60% |
 | L6 | 에러 복구 | 5% | 70% | 75% |
 | L7 | 스트레스/엣지 | 15% | 55% | 65% |
+
+## 자동 검증→수정 워크플로우 (Detect → Fix → Verify)
+
+### 워크플로우 개요
+
+```
+검증 실행 → 불변식 위반 감지 → 근본 원인 분석 → 자동 수정 → 재검증 → 커밋
+```
+
+테스트에서 버그를 발견하면 **수동 개입 없이** 분석→수정→재검증까지 자동으로 진행한다.
+
+### Phase 1: 자동 검증 실행
+
+| 단계 | 명령 | 통과 조건 |
+|------|------|----------|
+| 1-1 | `cd server && npm test` | 단위 테스트 77개 전부 PASS |
+| 1-2 | `node server/game/smart-bot.test.js` | 스마트 봇 17개 PASS |
+| 1-3 | `PORT=3099 node server/index.js &` → `node server/test/ws-protocol.test.js` | 불변식 12개 × 2~6인 전부 PASS |
+| 1-4 | `node server/test/soak-test.js --chaos --hands 200` | 200핸드 불변식 위반 0건 |
+| 1-5 | `flutter build web --web-renderer html` → `cd e2e && npx playwright test` | E2E 12개 spec PASS |
+
+**어느 단계라도 FAIL 시 → Phase 2로 진행**
+
+### Phase 2: 자동 근본 원인 분석
+
+FAIL 메시지에서 **불변식 번호 + 에러 내용**을 파싱하여 원인 영역 자동 분류:
+
+| 불변식 | 실패 시 원인 영역 | 조사 대상 파일 |
+|--------|----------------|--------------|
+| INV1 (zero-sum) | 점수 계산 로직 | `server/game/scorer.js` |
+| INV2 (메시지 순서) | 게임 상태 머신 | `server/game/room.js` (phase 전환) |
+| INV3 (Foul 일관성) | Foul 판정 로직 | `server/game/evaluator.js` (isFoul) |
+| INV4 (카드 고유성) | 덱 관리 / 핸드 리셋 | `server/game/room.js` (startNewHand, dealRound) |
+| INV5 (보드 완성도) | 카드 배치 / 확정 로직 | `server/game/room.js` (confirmPlacement) |
+| INV6 (라인 W/L/D) | 핸드 평가 로직 | `server/game/evaluator.js` (evaluateLine) |
+| INV7 (로열티) | 로열티 계산 | `server/game/royalty.js` |
+| INV8 (턴 순서) | 턴 관리 | `server/game/room.js` (advanceTurn) |
+| INV9 (딜 수) | 딜링 로직 | `server/game/room.js` (dealRound) |
+| INV10 (핸드 은닉) | 상태 브로드캐스트 | `server/game/room.js` (getGameState) |
+| INV11 (결과 동일성) | 스코어링 브로드캐스트 | `server/game/room.js` + `server/index.js` |
+| INV12 (스키마) | 메시지 구조 | `server/index.js` (핸들러) |
+| E2E 실패 | UI 셀렉터 / 렌더링 | `lib/ui/widgets/*.dart` + `e2e/helpers/*.ts` |
+
+### Phase 3: 자동 수정
+
+1. **원인 파일 읽기** — Phase 2에서 식별된 파일의 해당 함수/라인 분석
+2. **수정 적용** — 버그 패턴에 따라 코드 수정
+3. **단위 테스트 추가** — 해당 버그를 재현하는 회귀 테스트 작성
+4. **빌드 확인** — `npm test` + `flutter analyze` 통과
+
+### Phase 4: 재검증 (수정 확인)
+
+```
+수정 후 → Phase 1 전체 재실행 → 전부 PASS 확인
+```
+
+- PASS: 커밋 생성 (`fix(server): INV{N} {설명}`)
+- FAIL: 추가 분석 또는 사용자에게 보고
+
+### Phase 5: 결과 리포트
+
+```
+╔══════════════════════════════════════════╗
+║ QA 자동 검증→수정 리포트                   ║
+╠══════════════════════════════════════════╣
+║ 단위 테스트:    77/77 PASS               ║
+║ WS 프로토콜:    14/14 PASS               ║
+║ Soak 200핸드:   200/200 PASS             ║
+║ E2E:           12/12 PASS               ║
+║ 발견 버그:      2건                       ║
+║ 자동 수정:      2건                       ║
+║ 수동 필요:      0건                       ║
+╚══════════════════════════════════════════╝
+```
+
+### 자동화 트리거
+
+| 트리거 | 실행 범위 | 방법 |
+|--------|----------|------|
+| `git push` | Phase 1 전체 | GitHub Actions CI |
+| `npm run qa` | Phase 1-1 ~ 1-4 (서버만) | npm script |
+| `npm run qa:full` | Phase 1 전체 (E2E 포함) | npm script (Flutter 빌드 필요) |
+| `npm run qa:fix` | Phase 1→2→3→4→5 (자동 수정 포함) | npm script + Claude Code 연동 |
+| 수동 호출 | 선택적 | `/auto qa:fix` 또는 직접 실행 |
+
+### npm scripts (추가 필요)
+
+```json
+{
+  "scripts": {
+    "qa": "npm test && node game/smart-bot.test.js",
+    "qa:ws": "node test/ws-protocol.test.js",
+    "qa:soak": "node test/soak-test.js --hands 1000",
+    "qa:chaos": "node test/soak-test.js --chaos --hands 200",
+    "qa:full": "npm run qa && npm run qa:ws && npm run qa:soak"
+  }
+}
+```
+
+### 발견된 버그 자동 수정 이력
+
+| 버그 | 불변식 | 수정 내용 | 커밋 |
+|------|--------|----------|------|
+| scorer.js 이중 카운팅 | INV1 | line 142-144 royaltyDiff만 적용 | 8ef96d2 |
+| 4P+ R5 딜 수 | INV9 | 조사 중 (봇 전략 vs 서버 로직) | — |
+| 멀티 핸드 카드 중복 | INV4 | 조사 중 (덱 리셋 로직) | — |
+| 5인 보드 미완성 | INV5 | 조사 중 (Play/Fold 활성 플레이어) | — |
+
+---
 
 ## 테스트 실행 방법
 
@@ -156,4 +267,5 @@ data/
 
 | 날짜 | 버전 | 변경 내용 | 변경 유형 | 결정 근거 |
 |------|------|-----------|----------|----------|
+| 2026-03-30 | v1.1 | 자동 검증→수정 워크플로우 (Detect→Fix→Verify) 추가 | TECH | 검증 후 수정까지 자동화 필요 |
 | 2026-03-30 | v1.0 | 최초 작성 — 7-Level QA 계층 설계 + 전체 구현 | TECH | 기존 QA 한계 (프로토콜만 검증) + scorer 이중 카운팅 버그 발견 |
