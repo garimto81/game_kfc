@@ -6,7 +6,7 @@
  */
 import { Page, expect } from '@playwright/test';
 
-const SERVER_PORT = 3099;
+const SERVER_PORT = parseInt(process.env.SERVER_PORT || '8098');
 const BASE_API = `http://localhost:${SERVER_PORT}`;
 
 // ============================================================
@@ -126,24 +126,50 @@ export async function joinRoom(
   roomName: string,
   playerName: string
 ): Promise<void> {
+  // 방 목록에 방이 나타날 때까지 대기 (로비 WS 업데이트 또는 페이지 리프레시)
+  const roomText = page.getByText(roomName);
+  let found = false;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (await roomText.isVisible({ timeout: 1000 }).catch(() => false)) {
+      found = true;
+      break;
+    }
+    // 로비 WS가 아직 방 목록을 전달하지 않았으면 페이지 새로고침
+    if (attempt % 3 === 2) {
+      await page.reload();
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(2000);
+    } else {
+      await page.waitForTimeout(1500);
+    }
+  }
+  if (!found) {
+    throw new Error(`Room "${roomName}" not found in lobby after 15s. Check lobby WS broadcast.`);
+  }
+
   // 방 목록에서 해당 방의 Join 버튼 클릭
-  const roomCard = page.getByText(roomName).locator('..');
+  const roomCard = roomText.locator('..');
   const joinBtn = roomCard.locator(joinRoomBtnSelector);
-  if (await joinBtn.isVisible()) {
+  if (await joinBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await joinBtn.click();
   } else {
-    // fallback: 방 이름 옆의 Join 버튼
-    await page.getByText(roomName).click();
+    // fallback: 방 이름 텍스트 또는 가까운 Join 버튼 클릭
+    const nearbyJoin = page.getByText('Join').first();
+    if (await nearbyJoin.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await nearbyJoin.click();
+    } else {
+      await roomText.click();
+    }
   }
 
   // 이름 입력 다이얼로그
+  await page.waitForTimeout(500);
   const nameInput = page.locator(playerNameInputSelector);
-  if (await nameInput.isVisible()) {
+  if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
     await nameInput.locator('input').fill(playerName);
+    await page.getByText('Join').last().click();
   }
 
-  // 참가 확인
-  await page.getByText('Join').click();
   await page.waitForTimeout(1000);
 }
 

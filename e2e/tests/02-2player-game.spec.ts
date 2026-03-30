@@ -155,7 +155,11 @@ test.describe('02 — 2-Player Full Game', () => {
     const [alice, bob] = players;
     const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
 
-    // ── 방 생성 (REST API) ──
+    // ── 두 플레이어 로비 접속 (방 생성 전에 WS 연결해야 broadcast 수신 가능) ──
+    await actions.connectToServer(alice.page);
+    await actions.connectToServer(bob.page);
+
+    // ── 방 생성 (REST API — 로비 WS가 연결된 후에 생성해야 broadcast 수신) ──
     const createRes = await fetch(`${API}/api/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -167,10 +171,7 @@ test.describe('02 — 2-Player Full Game', () => {
     });
     const room = await createRes.json();
     expect(room.id).toBeTruthy();
-
-    // ── 두 플레이어 로비 접속 ──
-    await actions.connectToServer(alice.page);
-    await actions.connectToServer(bob.page);
+    await alice.page.waitForTimeout(1000); // WS broadcast 대기
 
     // ── UI를 통해 방 참가 ──
     // Alice가 방에 참가 (첫 번째 플레이어 → 호스트)

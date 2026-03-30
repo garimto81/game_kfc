@@ -5,6 +5,7 @@
 
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const cors = require('cors');
 const { URL } = require('url');
@@ -777,6 +778,19 @@ function broadcastStateUpdate(room) {
 // ============================================================
 // 서버 시작
 // ============================================================
+
+// Flutter Web 정적 파일 서빙 (build/web 디렉토리)
+const webBuildPath = path.join(__dirname, '..', 'build', 'web');
+const fs = require('fs');
+if (fs.existsSync(webBuildPath)) {
+  app.use(express.static(webBuildPath));
+  // SPA fallback: 알려진 API/WS 경로가 아닌 모든 요청은 index.html로
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
+    res.sendFile(path.join(webBuildPath, 'index.html'));
+  });
+  console.log(`Flutter Web serving from ${webBuildPath}`);
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

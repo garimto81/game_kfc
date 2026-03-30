@@ -1,8 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'path';
 
-const SERVER_PORT = 3099;
-const FLUTTER_PORT = 9099;
+// 단일 포트: 게임 서버가 Flutter Web + API + WS를 모두 서빙
+const SERVER_PORT = parseInt(process.env.SERVER_PORT || '8098');
 
 export default defineConfig({
   testDir: './tests',
@@ -18,7 +18,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: `http://localhost:${FLUTTER_PORT}`,
+    baseURL: `http://localhost:${SERVER_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'on',
     video: 'retain-on-failure',
@@ -32,13 +32,13 @@ export default defineConfig({
     },
   ],
 
-  webServer: [
-    {
-      command: `PORT=${SERVER_PORT} node ../server/index.js`,
-      port: SERVER_PORT,
-      reuseExistingServer: !process.env.CI,
-      timeout: 30_000,
-      cwd: path.resolve(__dirname),
-    },
-  ],
+  webServer: {
+    command: process.platform === 'win32'
+      ? `set PORT=${SERVER_PORT}&& node ../server/index.js`
+      : `PORT=${SERVER_PORT} node ../server/index.js`,
+    port: SERVER_PORT,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+    cwd: path.resolve(__dirname),
+  },
 });
