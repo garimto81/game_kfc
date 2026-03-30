@@ -19,6 +19,7 @@ const { scoreHand } = require('../game/scorer');
 const cliArgs = process.argv.slice(2);
 const USE_SMART = cliArgs.includes('--smart');
 const LOG_TRAINING = cliArgs.includes('--log-training');
+const USE_CHAOS = cliArgs.includes('--chaos');
 const TOTAL_HANDS_CLI = (() => {
   const idx = cliArgs.indexOf('--hands');
   return idx !== -1 && cliArgs[idx + 1] ? parseInt(cliArgs[idx + 1], 10) : null;
@@ -313,6 +314,60 @@ function simulateHand(room, playerIds, wsMap, useSmartBot) {
 // 메인 Soak 테스트
 // ============================================================
 
+// ============================================================
+// Chaos 모드 헬퍼
+// ============================================================
+
+/**
+ * Chaos: 랜덤 플레이어 제거 후 재참가 시도
+ * @returns {{ removed: boolean, rejoined: boolean }}
+ */
+function chaosRemoveAndRejoin(room, playerIds, wsMap) {
+  const active = room.getActivePlayers();
+  if (active.length <= 2) return { removed: false, rejoined: false };
+
+  // 랜덤 플레이어 선택 (호스트 제외)
+  const candidates = active.filter(id => id !== room.hostId);
+  if (candidates.length === 0) return { removed: false, rejoined: false };
+  const targetId = candidates[Math.floor(Math.random() * candidates.length)];
+  const targetPlayer = room.players.get(targetId);
+  if (!targetPlayer) return { removed: false, rejoined: false };
+
+  const targetName = targetPlayer.name;
+
+  // 제거
+  room.removePlayer(targetId);
+  const idxInList = playerIds.indexOf(targetId);
+
+  // 재참가 시도 (방이 waiting 상태가 아니면 실패할 수 있음)
+  const newWs = new MockWS();
+  const rejoinResult = room.addPlayer(targetName + '-R', newWs);
+  if (!rejoinResult.error) {
+    // 재참가 성공 — playerIds/wsMap 업데이트
+    if (idxInList !== -1) {
+      playerIds[idxInList] = rejoinResult.playerId;
+    } else {
+      playerIds.push(rejoinResult.playerId);
+    }
+    wsMap[rejoinResult.playerId] = newWs;
+    return { removed: true, rejoined: true };
+  }
+
+  // 재참가 실패 (게임 진행 중) — 제거된 상태로 계속
+  return { removed: true, rejoined: false };
+}
+
+/**
+ * Chaos: 잘못된 카드 배치 시도 후 에러 무시하고 정상 배치
+ */
+function chaosInvalidPlacement(room, playerId) {
+  // 존재하지 않는 카드로 배치 시도
+  const fakeCard = { rank: 15, suit: 9 };
+  const result = room.placeCard(playerId, fakeCard, 'bottom');
+  // 에러 무시 — 정상 흐름으로 복귀
+  return result.error ? true : false;
+}
+
 async function main() {
   const TOTAL_HANDS = TOTAL_HANDS_CLI || 1000;
   const memorySnapshots = [];
@@ -323,6 +378,11 @@ async function main() {
   const handTimes = [];
   const playerCounts = { 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
 
+  // Chaos 통계
+  let chaosRemoves = 0;
+  let chaosRejoins = 0;
+  let chaosInvalidPlacements = 0;
+
   // 스마트 봇 전략 함수 선택
   const useSmartDecide = USE_SMART && smartBotModule && typeof smartBotModule.decide === 'function';
 
@@ -330,6 +390,7 @@ async function main() {
   console.log(`Soak Test: ${TOTAL_HANDS} hands`);
   if (USE_SMART) console.log(`Bot: ${useSmartDecide ? 'smart-bot.js' : 'simple (smart-bot.js 없음)'}`);
   if (LOG_TRAINING) console.log(`Training log: ${trainingLogger ? 'active' : 'inactive (logger 없음)'}`);
+  if (USE_CHAOS) console.log('Chaos mode: ENABLED (10% remove, 5% invalid placement)');
   console.log('========================================');
 
   const startTime = Date.now();
@@ -388,6 +449,27 @@ async function main() {
       room.handNumber = 1;
       room.startNewHand();
 
+      // ── Chaos 모드: 핸드 시작 직후 랜덤 이벤트 ──
+      if (USE_CHAOS) {
+        // 10% 확률로 랜덤 플레이어 제거 + 재참가 시도
+        if (Math.random() < 0.10) {
+          const chaos = chaosRemoveAndRejoin(room, playerIds, wsMap);
+          if (chaos.removed) {
+            chaosRemoves++;
+            if (chaos.rejoined) chaosRejoins++;
+          }
+        }
+
+        // 5% 확률로 잘못된 카드 배치 시도
+        if (Math.random() < 0.05) {
+          const currentId = room.getCurrentTurnPlayerId();
+          if (currentId) {
+            chaosInvalidPlacement(room, currentId);
+            chaosInvalidPlacements++;
+          }
+        }
+      }
+
       // 핸드 시뮬레이션
       const result = simulateHand(room, playerIds, wsMap, useSmartDecide);
 
@@ -422,7 +504,8 @@ async function main() {
         verifyBoardCompleteness(room);
       } catch (e) {
         // 4인+ 게임에서 덱 부족 시 불완전 보드 허용
-        if (numPlayers < 4) throw e;
+        // Chaos 모드에서 플레이어 제거 후 불완전 보드 허용
+        if (numPlayers < 4 && !USE_CHAOS) throw e;
       }
 
       totalHands++;
@@ -468,6 +551,12 @@ async function main() {
   console.log(`Total fouls:     ${totalFouls}`);
   console.log(`Total FL:        ${totalFL}`);
   console.log(`Memory growth:   ${memoryGrowthRate}%`);
+  if (USE_CHAOS) {
+    console.log('Chaos stats:');
+    console.log(`  Removes:              ${chaosRemoves}`);
+    console.log(`  Rejoins:              ${chaosRejoins}`);
+    console.log(`  Invalid placements:   ${chaosInvalidPlacements}`);
+  }
   console.log('Player distribution:');
   for (const [count, times] of Object.entries(playerCounts)) {
     console.log(`  ${count}P: ${times} hands`);
