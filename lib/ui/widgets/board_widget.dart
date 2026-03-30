@@ -334,7 +334,10 @@ class _BoardWidgetState extends State<BoardWidget> {
 
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: slotWidget,
+            child: Semantics(
+              label: 'slot-$lineName-$i',
+              child: slotWidget,
+            ),
           );
         }),
       ],
@@ -376,7 +379,10 @@ class _BoardWidgetState extends State<BoardWidget> {
           );
     }
 
-    return lineWidget;
+    return Semantics(
+      label: 'board-line-$lineName',
+      child: lineWidget,
+    );
   }
 
   Widget _buildRoyaltyBadge(List<ofc.Card> cards, String lineName) {

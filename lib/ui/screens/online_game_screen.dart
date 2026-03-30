@@ -174,7 +174,9 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
   Widget _buildTurnIndicator(OnlineState onlineState) {
     if (onlineState.isMyTurn) {
-      return AnimatedBuilder(
+      return Semantics(
+        label: 'turn-indicator-my-turn',
+        child: AnimatedBuilder(
         animation: _turnPulseController,
         builder: (context, child) {
           final color = _turnHighlight
@@ -195,6 +197,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
             ),
           );
         },
+      ),
       );
     }
 
@@ -204,29 +207,32 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final turnName = (players?[turnPid] as Map<String, dynamic>?)?['name'] ?? 'Opponent';
     final isDealer = turnPid != null && turnPid == onlineState.dealerButtonId;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      color: Colors.blueGrey[800],
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.hourglass_top, color: Colors.white70, size: 16),
-          const SizedBox(width: 8),
-          Text("Waiting for $turnName's turn...",
-              style: const TextStyle(color: Colors.white70, fontSize: 13)),
-          if (isDealer) ...[
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              decoration: BoxDecoration(
-                color: Colors.amber[700],
-                borderRadius: BorderRadius.circular(4),
+    return Semantics(
+      label: 'turn-indicator-waiting',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        color: Colors.blueGrey[800],
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.hourglass_top, color: Colors.white70, size: 16),
+            const SizedBox(width: 8),
+            Text("Waiting for $turnName's turn...",
+                style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            if (isDealer) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.amber[700],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('D', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
-              child: const Text('D', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -239,7 +245,9 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final isUrgent = _timeRemaining <= 5;
     final seconds = _timeRemaining.ceil();
 
-    return Padding(
+    return Semantics(
+      label: 'turn-timer',
+      child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -272,6 +280,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -696,20 +705,23 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
             }),
           ),
           if (onlineState.isInFantasyland)
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.amber[700],
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.auto_awesome, size: 14, color: Colors.white),
-                  SizedBox(width: 4),
-                  Text('FL', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                ],
+            Semantics(
+              label: 'fantasyland-badge',
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.amber[700],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, size: 14, color: Colors.white),
+                    SizedBox(width: 4),
+                    Text('FL', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
               ),
             ),
         ],
@@ -774,20 +786,23 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   _buildTimerBar(),
             // Folded banner
             if (onlineState.isFolded)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: Colors.blueGrey[700],
-                child: const Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.visibility, color: Colors.white70, size: 16),
-                    SizedBox(width: 8),
-                    Text(
-                      'Folded — Spectating',
-                      style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
-                    ),
-                  ],
+              Semantics(
+                label: 'folded-banner',
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: Colors.blueGrey[700],
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.visibility, color: Colors.white70, size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        'Folded — Spectating',
+                        style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             if (onlineState.isFolded) ...[
@@ -881,16 +896,19 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                       ),
                     if (_localPlacements.length > 1 || (_localPlacements.isNotEmpty && _hasDiscarded)) const SizedBox(width: 8),
                     if (_localPlacements.isNotEmpty)
-                      ElevatedButton.icon(
-                        onPressed: _onUndoCard,
-                        icon: const Icon(Icons.undo, size: 18),
-                        label: Text('Undo',
-                            style: TextStyle(fontSize: isCompact ? 13 : 15)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange[700],
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(
-                              horizontal: isCompact ? 12 : 20, vertical: 10),
+                      Semantics(
+                        label: 'undo-button',
+                        child: ElevatedButton.icon(
+                          onPressed: _onUndoCard,
+                          icon: const Icon(Icons.undo, size: 18),
+                          label: Text('Undo',
+                              style: TextStyle(fontSize: isCompact ? 13 : 15)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange[700],
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: isCompact ? 12 : 20, vertical: 10),
+                          ),
                         ),
                       ),
                     if (_localPlacements.isNotEmpty) const SizedBox(width: 8),
@@ -912,16 +930,19 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                     if (!(!_is4pR4(onlineState) && isPineapple &&
                         onlineState.hand.isEmpty &&
                         _canConfirm()))
-                      ElevatedButton(
-                        onPressed: _canConfirm() ? _onConfirm : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green[600],
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(
-                              horizontal: isCompact ? 16 : 24, vertical: 12),
+                      Semantics(
+                        label: 'confirm-button',
+                        child: ElevatedButton(
+                          onPressed: _canConfirm() ? _onConfirm : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[600],
+                            foregroundColor: Colors.white,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: isCompact ? 16 : 24, vertical: 12),
+                          ),
+                          child: Text('Confirm',
+                              style: TextStyle(fontSize: isCompact ? 14 : 16)),
                         ),
-                        child: Text('Confirm',
-                            style: TextStyle(fontSize: isCompact ? 14 : 16)),
                       ),
                   ],
                 ),
@@ -1180,31 +1201,34 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
     final activePlayers = onlineState.gameState?['activePlayers'] as List<dynamic>? ?? [];
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: scores.entries.map((entry) {
-        final name = (players[entry.key]
-                as Map<String, dynamic>?)?['name'] ??
-            entry.key;
-        final score = entry.value as int? ?? 0;
-        final isMe = entry.key == onlineState.playerId;
-        final seatIdx = activePlayers.indexOf(entry.key);
-        final color = PlayerColors.forSeat(seatIdx >= 0 ? seatIdx : 0);
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Chip(
-            backgroundColor: isMe ? color.primary : color.background,
-            label: Text(
-              '$name: $score',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
-                fontSize: 12,
+    return Semantics(
+      label: 'score-bar',
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: scores.entries.map((entry) {
+          final name = (players[entry.key]
+                  as Map<String, dynamic>?)?['name'] ??
+              entry.key;
+          final score = entry.value as int? ?? 0;
+          final isMe = entry.key == onlineState.playerId;
+          final seatIdx = activePlayers.indexOf(entry.key);
+          final color = PlayerColors.forSeat(seatIdx >= 0 ? seatIdx : 0);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Chip(
+              backgroundColor: isMe ? color.primary : color.background,
+              label: Text(
+                '$name: $score',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 12,
+                ),
               ),
             ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -1432,11 +1456,14 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   ? 'Ready (${readyState.readyCount}/${readyState.readyTotal})'
                   : 'Ready';
 
-              return ElevatedButton(
-                onPressed: () {
-                  ref.read(onlineGameNotifierProvider.notifier).sendReadyForNextHand();
-                },
-                child: Text(readyText),
+              return Semantics(
+                label: 'ready-button',
+                child: ElevatedButton(
+                  onPressed: () {
+                    ref.read(onlineGameNotifierProvider.notifier).sendReadyForNextHand();
+                  },
+                  child: Text(readyText),
+                ),
               );
             },
           ),

@@ -66,7 +66,9 @@ class HandWidget extends StatelessWidget {
       final rows = (cards.length / 9).ceil();
       final wrapHeight = rows * 74.0 + (rows - 1) * 4.0;
       final hasFlButtons = onSortByRank != null || onSortBySuit != null || onAutoArrange != null;
-      return Column(
+      return Semantics(
+        label: 'hand-area',
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (hasFlButtons)
@@ -107,30 +109,36 @@ class HandWidget extends StatelessWidget {
                 alignment: WrapAlignment.center,
                 spacing: 4,
                 runSpacing: 4,
-                children: cards.map((card) {
-                  return CardWidget(
-                    card: card,
-                    draggable: enabled,
-                    excited: excitedCards.contains(card),
-                    onTap: () => onCardTap?.call(card),
-                  )
-                      .animate()
-                      .slideY(
-                        begin: -1.5,
-                        end: 0,
-                        duration: 300.ms,
-                        delay: (cards.indexOf(card) * 50).ms,
-                        curve: Curves.easeOutCubic,
-                      )
-                      .fadeIn(
-                        duration: 200.ms,
-                        delay: (cards.indexOf(card) * 50).ms,
-                      );
+                children: cards.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final card = entry.value;
+                  return Semantics(
+                    label: 'hand-card-$index',
+                    child: CardWidget(
+                      card: card,
+                      draggable: enabled,
+                      excited: excitedCards.contains(card),
+                      onTap: () => onCardTap?.call(card),
+                    )
+                        .animate()
+                        .slideY(
+                          begin: -1.5,
+                          end: 0,
+                          duration: 300.ms,
+                          delay: (index * 50).ms,
+                          curve: Curves.easeOutCubic,
+                        )
+                        .fadeIn(
+                          duration: 200.ms,
+                          delay: (index * 50).ms,
+                        ),
+                  );
                 }).toList(),
               ),
             ),
           ),
         ],
+      ),
       );
     }
 
@@ -138,14 +146,20 @@ class HandWidget extends StatelessWidget {
     final isLastDiscard =
         showDiscardButtons && !hasDiscarded && cards.length == 1;
 
-    return SizedBox(
+    return Semantics(
+      label: 'hand-area',
+      child: SizedBox(
       height: showDiscardButtons ? 104 : 80,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: cards.map((card) {
+        children: cards.asMap().entries.map((entry) {
+          final index = entry.key;
+          final card = entry.value;
           if (isLastDiscard) {
             // 마지막 카드: 전체 discard 스타일 + 탭으로 discard
-            return Padding(
+            return Semantics(
+              label: 'hand-card-$index',
+              child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: GestureDetector(
                 onTap: enabled ? () => onDiscard?.call(card) : null,
@@ -185,10 +199,13 @@ class HandWidget extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
             );
           }
 
-          return Padding(
+          return Semantics(
+            label: 'hand-card-$index',
+            child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -239,9 +256,11 @@ class HandWidget extends StatelessWidget {
                   ),
               ],
             ),
+          ),
           );
         }).toList(),
       ),
+    ),
     );
   }
 }

@@ -82,7 +82,12 @@ class CardWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (miniMode) {
-      return _buildMiniCard();
+      return Semantics(
+        label: faceDown
+            ? 'card-face-down'
+            : 'card-${card.rank.name}-${card.suit.name}',
+        child: _buildMiniCard(),
+      );
     }
 
     final cardContent = AnimatedSwitcher(
@@ -126,21 +131,31 @@ class CardWidget extends StatelessWidget {
     }
 
     if (draggable) {
-      return Draggable<CardDragData>(
-        data: CardDragData(card: card),
-        feedback: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(8),
-          child: Transform.scale(
-            scale: 1.1,
-            child: faceDown ? _buildBackFace() : _buildFrontFace(),
+      return Semantics(
+        label: faceDown
+            ? 'card-face-down'
+            : 'card-${card.rank.name}-${card.suit.name}',
+        child: Draggable<CardDragData>(
+          data: CardDragData(card: card),
+          feedback: Material(
+            elevation: 8,
+            borderRadius: BorderRadius.circular(8),
+            child: Transform.scale(
+              scale: 1.1,
+              child: faceDown ? _buildBackFace() : _buildFrontFace(),
+            ),
           ),
+          childWhenDragging: Opacity(opacity: 0.3, child: displayContent),
+          child: GestureDetector(onTap: onTap, child: displayContent),
         ),
-        childWhenDragging: Opacity(opacity: 0.3, child: displayContent),
-        child: GestureDetector(onTap: onTap, child: displayContent),
       );
     }
 
-    return GestureDetector(onTap: onTap, child: displayContent);
+    return Semantics(
+      label: faceDown
+          ? 'card-face-down'
+          : 'card-${card.rank.name}-${card.suit.name}',
+      child: GestureDetector(onTap: onTap, child: displayContent),
+    );
   }
 }

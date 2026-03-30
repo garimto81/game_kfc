@@ -1,15 +1,56 @@
 /**
  * Flutter Web 게임 액션 헬퍼
  *
- * Flutter Web (--web-renderer html) 빌드 시 실제 DOM 엘리먼트가 생성되며,
- * flt-semantics 태그 또는 텍스트 기반 셀렉터로 접근 가능하다.
- *
- * TODO: 실제 Flutter Web DOM 구조 확인 후 셀렉터 조정 필요
+ * Flutter Web (--web-renderer html) 빌드 시 Semantics 위젯이 aria-label 속성으로
+ * DOM에 노출된다. 모든 셀렉터는 aria-label 기반으로 동작한다.
  */
 import { Page, expect } from '@playwright/test';
 
 const SERVER_PORT = 3099;
 const BASE_API = `http://localhost:${SERVER_PORT}`;
+
+// ============================================================
+// 셀렉터 정의
+// ============================================================
+
+/** 핸드 카드 전체 (hand-card-0, hand-card-1, ...) */
+const handCardSelector = '[aria-label^="hand-card-"]';
+
+/** 특정 핸드 카드 */
+const handCard = (idx: number) => `[aria-label="hand-card-${idx}"]`;
+
+/** 보드 슬롯 (slot-top-0, slot-mid-2, ...) */
+const boardSlot = (line: string, idx: number) =>
+  `[aria-label="slot-${line}-${idx}"]`;
+
+/** 보드 라인 (board-line-top, board-line-mid, board-line-bottom) */
+const boardLine = (line: string) => `[aria-label="board-line-${line}"]`;
+
+/** 특정 카드 (card-ace-spade, card-two-heart, ...) */
+const specificCard = (rank: string, suit: string) =>
+  `[aria-label="card-${rank}-${suit}"]`;
+
+// 버튼
+const confirmBtnSelector = '[aria-label="confirm-button"]';
+const readyBtnSelector = '[aria-label="ready-button"]';
+const undoBtnSelector = '[aria-label="undo-button"]';
+const startGameBtnSelector = '[aria-label="start-game-button"]';
+const createRoomBtnSelector = '[aria-label="create-room-button"]';
+const joinRoomBtnSelector = '[aria-label="join-room-button"]';
+
+// 상태
+const turnIndicatorSelector = '[aria-label^="turn-indicator-"]';
+const myTurnSelector = '[aria-label="turn-indicator-my-turn"]';
+const waitingTurnSelector = '[aria-label="turn-indicator-waiting"]';
+const foldedBannerSelector = '[aria-label="folded-banner"]';
+const fantasylandBadgeSelector = '[aria-label="fantasyland-badge"]';
+const scoreBarSelector = '[aria-label="score-bar"]';
+const turnTimerSelector = '[aria-label="turn-timer"]';
+const handAreaSelector = '[aria-label="hand-area"]';
+
+// 로비
+const roomItem = (roomId: string) => `[aria-label="room-item-${roomId}"]`;
+const playerNameInputSelector = '[aria-label="player-name-input"]';
 
 // ============================================================
 // 서버 연결 / 방 관리
@@ -21,7 +62,6 @@ const BASE_API = `http://localhost:${SERVER_PORT}`;
 export async function connectToServer(page: Page): Promise<void> {
   await page.goto('/');
   // Flutter Web이 로드될 때까지 대기
-  // TODO: Flutter Web 로드 완료 시그널 셀렉터 조정
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(2000); // Flutter 초기화 대기
 }
@@ -58,21 +98,23 @@ export async function createRoom(
     playerName: string;
   }
 ): Promise<void> {
-  // "방 만들기" 버튼 클릭
-  // TODO: 셀렉터 조정 — Flutter Web DOM 구조 확인 필요
-  await page.getByText('방 만들기').click();
+  // Create 버튼 클릭
+  await page.locator(createRoomBtnSelector).click();
+
+  // 플레이어 이름 입력
+  const nameInput = page.locator(playerNameInputSelector);
+  if (await nameInput.isVisible()) {
+    await nameInput.locator('input').fill(options.playerName);
+  }
 
   // 방 이름 입력
-  await page.locator('input[type="text"]').first().fill(options.name);
-
-  // 플레이어 이름 입력 (두 번째 텍스트 입력 필드)
   const inputs = page.locator('input[type="text"]');
   if ((await inputs.count()) > 1) {
-    await inputs.nth(1).fill(options.playerName);
+    await inputs.nth(1).fill(options.name);
   }
 
   // 생성 확인
-  await page.getByText('만들기').or(page.getByText('Create')).click();
+  await page.getByText('Create').click();
   await page.waitForTimeout(1000);
 }
 
@@ -84,18 +126,24 @@ export async function joinRoom(
   roomName: string,
   playerName: string
 ): Promise<void> {
-  // 방 목록에서 해당 방 찾아 클릭
-  // TODO: 셀렉터 조정
-  await page.getByText(roomName).click();
+  // 방 목록에서 해당 방의 Join 버튼 클릭
+  const roomCard = page.getByText(roomName).locator('..');
+  const joinBtn = roomCard.locator(joinRoomBtnSelector);
+  if (await joinBtn.isVisible()) {
+    await joinBtn.click();
+  } else {
+    // fallback: 방 이름 옆의 Join 버튼
+    await page.getByText(roomName).click();
+  }
 
   // 이름 입력 다이얼로그
-  const nameInput = page.locator('input[type="text"]');
+  const nameInput = page.locator(playerNameInputSelector);
   if (await nameInput.isVisible()) {
-    await nameInput.fill(playerName);
+    await nameInput.locator('input').fill(playerName);
   }
 
   // 참가 확인
-  await page.getByText('참가').or(page.getByText('Join')).click();
+  await page.getByText('Join').click();
   await page.waitForTimeout(1000);
 }
 
@@ -107,35 +155,40 @@ export async function joinRoom(
  * 게임 시작 대기 (gameStart 메시지 수신까지)
  */
 export async function waitForGameStart(page: Page): Promise<void> {
-  // gameStart 후 딜링 애니메이션이 완료될 때까지 대기
-  // TODO: 실제 게임 시작 시그널 셀렉터 조정
-  await page.waitForTimeout(3000);
+  // 턴 인디케이터 또는 보드 라인이 나타날 때까지 대기
+  try {
+    await page.locator(turnIndicatorSelector).waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    });
+  } catch {
+    // 딜링 애니메이션 시간 대기
+    await page.waitForTimeout(3000);
+  }
 }
 
 /**
  * 호스트가 Start Game 클릭
  */
 export async function startGame(page: Page): Promise<void> {
-  await page.getByText('Start Game').or(page.getByText('게임 시작')).click();
+  await page.locator(startGameBtnSelector).click();
   // 딜러 선택 애니메이션 대기
   await page.waitForTimeout(2000);
 }
 
 /**
  * 내 턴이 될 때까지 대기
- * 녹색 턴 인디케이터 또는 카드가 손에 들어올 때까지
  */
 export async function waitForMyTurn(page: Page, timeoutMs = 30_000): Promise<void> {
-  // 턴 인디케이터: Confirm 버튼이 활성화되면 내 턴
-  // 또는 카드가 핸드에 나타나면 내 턴
-  // TODO: 셀렉터 조정
   try {
-    await page.getByText('Confirm').or(page.getByText('확인')).waitFor({
+    await page.locator(myTurnSelector).waitFor({
       state: 'visible',
       timeout: timeoutMs,
     });
   } catch {
-    // Confirm이 안 보일 수 있음 (이미 카드를 배치해야 할 때)
+    // 이미 카드를 배치해야 할 수 있음 — 핸드 카드 존재 확인
+    const cards = page.locator(handCardSelector);
+    if ((await cards.count()) > 0) return;
   }
 }
 
@@ -143,20 +196,29 @@ export async function waitForMyTurn(page: Page, timeoutMs = 30_000): Promise<voi
  * dealCards 메시지 수신 대기 (카드가 핸드에 나타남)
  */
 export async function waitForDeal(page: Page, timeoutMs = 15_000): Promise<void> {
-  // 카드가 핸드 영역에 표시될 때까지 대기
-  // TODO: 실제 카드 위젯 셀렉터 조정
-  await page.waitForTimeout(2000);
+  try {
+    await page.locator(handCardSelector).first().waitFor({
+      state: 'visible',
+      timeout: timeoutMs,
+    });
+  } catch {
+    await page.waitForTimeout(2000);
+  }
 }
 
 /**
  * 현재 핸드 카드 목록 가져오기
- * Flutter Web에서는 시맨틱 레이블이나 data 속성으로 카드 정보를 가져올 수 있음
+ * aria-label에서 카드 정보를 추출한다 (예: "hand-card-0")
  */
 export async function getHandCards(page: Page): Promise<string[]> {
-  // TODO: 실제 카드 위젯 셀렉터 및 데이터 추출 방법 조정
-  // Flutter Web HTML renderer에서는 flt-semantics로 접근 가능
-  const cards = await page.locator('[aria-label*="card"]').allTextContents();
-  return cards;
+  const cards = page.locator(handCardSelector);
+  const count = await cards.count();
+  const labels: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const label = await cards.nth(i).getAttribute('aria-label');
+    if (label) labels.push(label);
+  }
+  return labels;
 }
 
 /**
@@ -167,21 +229,16 @@ export async function placeCardToLine(
   cardIndex: number,
   line: 'top' | 'mid' | 'bottom'
 ): Promise<void> {
-  // TODO: 실제 드래그 앤 드롭 또는 탭 셀렉터 조정
-  // Flutter Web에서는 좌표 기반 드래그가 필요할 수 있음
-  //
-  // 현재 전략: 카드 위젯 탭 → 라인 영역 탭
-  const handCards = page.locator('[aria-label*="card"]');
-  const cardCount = await handCards.count();
-  if (cardIndex < cardCount) {
-    await handCards.nth(cardIndex).click();
+  const card = page.locator(handCard(cardIndex));
+  if (await card.isVisible()) {
+    // 카드 탭
+    await card.click();
     await page.waitForTimeout(300);
 
-    // 라인 영역 클릭
-    // TODO: 각 라인 영역의 셀렉터 조정
-    const lineLocator = page.locator(`[aria-label*="${line}"]`).first();
-    if (await lineLocator.isVisible()) {
-      await lineLocator.click();
+    // 라인 영역 또는 빈 슬롯 클릭
+    const lineArea = page.locator(boardLine(line));
+    if (await lineArea.isVisible()) {
+      await lineArea.click();
     }
   }
   await page.waitForTimeout(300);
@@ -191,14 +248,12 @@ export async function placeCardToLine(
  * 카드 디스카드
  */
 export async function discardCard(page: Page, cardIndex: number): Promise<void> {
-  // TODO: 디스카드 영역 셀렉터 조정
-  const handCards = page.locator('[aria-label*="card"]');
-  const cardCount = await handCards.count();
-  if (cardIndex < cardCount) {
-    await handCards.nth(cardIndex).click();
+  const card = page.locator(handCard(cardIndex));
+  if (await card.isVisible()) {
+    await card.click();
     await page.waitForTimeout(300);
-    // 디스카드 영역 또는 버튼 클릭
-    const discardBtn = page.getByText('Discard').or(page.getByText('버리기'));
+    // Discard 버튼 클릭
+    const discardBtn = page.getByText('Discard');
     if (await discardBtn.isVisible()) {
       await discardBtn.click();
     }
@@ -210,7 +265,7 @@ export async function discardCard(page: Page, cardIndex: number): Promise<void> 
  * Confirm 버튼 클릭
  */
 export async function confirmPlacement(page: Page): Promise<void> {
-  await page.getByText('Confirm').or(page.getByText('확인')).click();
+  await page.locator(confirmBtnSelector).click();
   await page.waitForTimeout(500);
 }
 
@@ -218,10 +273,8 @@ export async function confirmPlacement(page: Page): Promise<void> {
  * handScored 다이얼로그 대기
  */
 export async function waitForScoring(page: Page, timeoutMs = 30_000): Promise<void> {
-  // 스코어 다이얼로그가 나타날 때까지 대기
-  // TODO: 셀렉터 조정
   try {
-    await page.getByText('Ready').or(page.getByText('준비')).waitFor({
+    await page.locator(readyBtnSelector).waitFor({
       state: 'visible',
       timeout: timeoutMs,
     });
@@ -234,7 +287,7 @@ export async function waitForScoring(page: Page, timeoutMs = 30_000): Promise<vo
  * Ready 버튼 클릭
  */
 export async function clickReady(page: Page): Promise<void> {
-  await page.getByText('Ready').or(page.getByText('준비')).click();
+  await page.locator(readyBtnSelector).click();
   await page.waitForTimeout(500);
 }
 
@@ -257,7 +310,7 @@ export async function choosePlayOrFold(
  * Undo 버튼 클릭
  */
 export async function clickUndo(page: Page): Promise<void> {
-  await page.getByText('Undo').or(page.getByText('되돌리기')).click();
+  await page.locator(undoBtnSelector).click();
   await page.waitForTimeout(300);
 }
 
@@ -265,7 +318,6 @@ export async function clickUndo(page: Page): Promise<void> {
  * Grid View 토글
  */
 export async function toggleViewMode(page: Page): Promise<void> {
-  // TODO: 뷰 모드 토글 버튼 셀렉터 조정
   const gridBtn = page.locator('[aria-label*="grid"]').or(page.getByText('Grid'));
   if (await gridBtn.isVisible()) {
     await gridBtn.click();
@@ -277,7 +329,6 @@ export async function toggleViewMode(page: Page): Promise<void> {
  * 이모트 전송
  */
 export async function sendEmote(page: Page, emoteId: string): Promise<void> {
-  // TODO: 이모트 UI 셀렉터 조정
   const emoteBtn = page.locator('[aria-label*="emote"]').first();
   if (await emoteBtn.isVisible()) {
     await emoteBtn.click();
@@ -286,3 +337,31 @@ export async function sendEmote(page: Page, emoteId: string): Promise<void> {
   }
   await page.waitForTimeout(300);
 }
+
+// ============================================================
+// 셀렉터 export (테스트에서 직접 사용 가능)
+// ============================================================
+
+export const selectors = {
+  handCard: handCardSelector,
+  handCardAt: handCard,
+  boardSlot,
+  boardLine,
+  specificCard,
+  confirmBtn: confirmBtnSelector,
+  readyBtn: readyBtnSelector,
+  undoBtn: undoBtnSelector,
+  startGameBtn: startGameBtnSelector,
+  createRoomBtn: createRoomBtnSelector,
+  joinRoomBtn: joinRoomBtnSelector,
+  turnIndicator: turnIndicatorSelector,
+  myTurn: myTurnSelector,
+  waitingTurn: waitingTurnSelector,
+  foldedBanner: foldedBannerSelector,
+  fantasylandBadge: fantasylandBadgeSelector,
+  scoreBar: scoreBarSelector,
+  turnTimer: turnTimerSelector,
+  handArea: handAreaSelector,
+  roomItem,
+  playerNameInput: playerNameInputSelector,
+};

@@ -150,14 +150,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     const Spacer(),
                     if (onlineState.connectionState ==
                         OnlineConnectionState.inLobby)
-                      TextButton.icon(
-                        onPressed: () => _showCreateRoomDialog(),
-                        icon: const Icon(Icons.add, size: 16, color: Colors.white),
-                        label: const Text('Create', style: TextStyle(color: Colors.white, fontSize: 13)),
-                        style: TextButton.styleFrom(
-                          backgroundColor: Colors.teal[600],
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      Semantics(
+                        label: 'create-room-button',
+                        child: TextButton.icon(
+                          onPressed: () => _showCreateRoomDialog(),
+                          icon: const Icon(Icons.add, size: 16, color: Colors.white),
+                          label: const Text('Create', style: TextStyle(color: Colors.white, fontSize: 13)),
+                          style: TextButton.styleFrom(
+                            backgroundColor: Colors.teal[600],
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
                         ),
                       ),
                     const SizedBox(width: 8),
@@ -243,7 +246,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ? '$playerCount/$maxPlayers players · ${turnTimeLimit}s'
         : '$playerCount/$maxPlayers players';
 
-    return Card(
+    return Semantics(
+      label: 'room-item-$roomId',
+      child: Card(
       color: isWaiting ? Colors.teal[800] : Colors.teal[900],
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -260,23 +265,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           style: TextStyle(color: Colors.teal[300], fontSize: 13),
         ),
         trailing: isWaiting
-            ? ElevatedButton(
-                onPressed: () => _onJoinRoom(roomId),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.teal[600],
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
+            ? Semantics(
+                label: 'join-room-button',
+                child: ElevatedButton(
+                  onPressed: () => _onJoinRoom(roomId),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal[600],
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Join'),
                 ),
-                child: const Text('Join'),
               )
             : Text(
                 '($status)',
                 style: TextStyle(color: Colors.grey[500], fontSize: 13),
               ),
       ),
+    ),
     );
   }
 
@@ -340,19 +349,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         )),
                     const SizedBox(height: 16),
                     if (onlineState.isHost)
-                      ElevatedButton(
-                        onPressed: onlineState.connectedPlayers >= 2
-                            ? () => ref
-                                .read(onlineGameNotifierProvider.notifier)
-                                .startGame()
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.teal[600],
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor: Colors.teal[800],
-                          disabledForegroundColor: Colors.white54,
+                      Semantics(
+                        label: 'start-game-button',
+                        child: ElevatedButton(
+                          onPressed: onlineState.connectedPlayers >= 2
+                              ? () => ref
+                                  .read(onlineGameNotifierProvider.notifier)
+                                  .startGame()
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal[600],
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: Colors.teal[800],
+                            disabledForegroundColor: Colors.white54,
+                          ),
+                          child: const Text('Start Game'),
                         ),
-                        child: const Text('Start Game'),
                       )
                     else
                       Text(
@@ -476,19 +488,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                controller: playerNameController,
-                style: const TextStyle(color: Colors.white),
-                maxLength: 20,
-                decoration: InputDecoration(
-                  labelText: 'Player Name',
-                  labelStyle: TextStyle(color: Colors.teal[300]),
-                  counterStyle: TextStyle(color: Colors.teal[400]),
-                  enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Colors.teal[400]!),
-                  ),
-                  focusedBorder: const UnderlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white),
+              Semantics(
+                label: 'player-name-input',
+                child: TextField(
+                  controller: playerNameController,
+                  style: const TextStyle(color: Colors.white),
+                  maxLength: 20,
+                  decoration: InputDecoration(
+                    labelText: 'Player Name',
+                    labelStyle: TextStyle(color: Colors.teal[300]),
+                    counterStyle: TextStyle(color: Colors.teal[400]),
+                    enabledBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.teal[400]!),
+                    ),
+                    focusedBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white),
+                    ),
                   ),
                 ),
               ),
@@ -590,26 +605,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         backgroundColor: Colors.teal[800],
         title: const Text('Enter Name',
             style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 20,
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            hintText: 'Your name',
-            hintStyle: TextStyle(color: Colors.teal[300]),
-            counterStyle: TextStyle(color: Colors.teal[400]),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.teal[400]!),
-            ),
-            focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.white),
-            ),
+        content: Semantics(
+          label: 'player-name-input',
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 20,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Your name',
+              hintStyle: TextStyle(color: Colors.teal[300]),
+              counterStyle: TextStyle(color: Colors.teal[400]),
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.teal[400]!),
+              ),
+              focusedBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.white),
+              ),
           ),
-          onSubmitted: (value) {
-            final name = value.trim();
-            if (name.isNotEmpty) Navigator.of(ctx).pop(name);
-          },
+            onSubmitted: (value) {
+              final name = value.trim();
+              if (name.isNotEmpty) Navigator.of(ctx).pop(name);
+            },
+          ),
         ),
         actions: [
           TextButton(
