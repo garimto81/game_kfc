@@ -208,7 +208,96 @@ export async function placeBotCardsUI(
   round: number,
   isFantasyland: boolean
 ): Promise<void> {
-  // TODO: 실제 Flutter Web DOM에서 카드를 읽고 배치하는 로직
-  // 현재는 placeholder — WS 프로토콜 테스트에서 직접 메시지로 처리
+  const handCardSelector = '[aria-label^="hand-card-"]';
+  const boardLineSelector = (line: string) => `[aria-label="board-line-${line}"]`;
+
+  // 핸드 카드가 보일 때까지 대기
+  try {
+    await page.locator(handCardSelector).first().waitFor({
+      state: 'visible',
+      timeout: 10_000,
+    });
+  } catch {
+    // 카드가 없으면 턴이 아님 — 스킵
+    return;
+  }
+
+  const cardCount = await page.locator(handCardSelector).count();
+  if (cardCount === 0) return;
+
+  if (isFantasyland) {
+    // FL: 14장 → bottom 5, mid 5, top 3, discard 1
+    for (let i = 0; i < 5; i++) {
+      await page.locator(handCardSelector).first().click();
+      await page.waitForTimeout(200);
+      await page.locator(boardLineSelector('bottom')).click();
+      await page.waitForTimeout(200);
+    }
+    for (let i = 0; i < 5; i++) {
+      await page.locator(handCardSelector).first().click();
+      await page.waitForTimeout(200);
+      await page.locator(boardLineSelector('mid')).click();
+      await page.waitForTimeout(200);
+    }
+    for (let i = 0; i < 3; i++) {
+      await page.locator(handCardSelector).first().click();
+      await page.waitForTimeout(200);
+      await page.locator(boardLineSelector('top')).click();
+      await page.waitForTimeout(200);
+    }
+    // 나머지 1장 디스카드
+    const discardBtn = page.getByText('Discard');
+    if (await page.locator(handCardSelector).count() > 0) {
+      await page.locator(handCardSelector).first().click();
+      await page.waitForTimeout(200);
+      if (await discardBtn.isVisible()) {
+        await discardBtn.click();
+      }
+    }
+  } else if (round === 1) {
+    // R1: 5장 → bottom 2, mid 2, top 1
+    const lines: Array<'bottom' | 'mid' | 'top'> = ['bottom', 'bottom', 'mid', 'mid', 'top'];
+    for (const line of lines) {
+      const cards = page.locator(handCardSelector);
+      if ((await cards.count()) === 0) break;
+      await cards.first().click();
+      await page.waitForTimeout(200);
+      const lineEl = page.locator(boardLineSelector(line));
+      if (await lineEl.isVisible()) {
+        await lineEl.click();
+      }
+      await page.waitForTimeout(300);
+    }
+  } else {
+    // R2~R5: 3장 → 2배치 + 1디스카드
+    const lines: Array<'bottom' | 'mid'> = ['bottom', 'mid'];
+    for (const line of lines) {
+      const cards = page.locator(handCardSelector);
+      if ((await cards.count()) === 0) break;
+      await cards.first().click();
+      await page.waitForTimeout(200);
+      const lineEl = page.locator(boardLineSelector(line));
+      if (await lineEl.isVisible()) {
+        await lineEl.click();
+      }
+      await page.waitForTimeout(300);
+    }
+    // 나머지 1장 디스카드
+    const remaining = page.locator(handCardSelector);
+    if ((await remaining.count()) > 0) {
+      await remaining.first().click();
+      await page.waitForTimeout(200);
+      const discardBtn = page.getByText('Discard');
+      if (await discardBtn.isVisible()) {
+        await discardBtn.click();
+      }
+    }
+  }
+
+  // Confirm 클릭
+  const confirmBtn = page.locator('[aria-label="confirm-button"]');
+  if (await confirmBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await confirmBtn.click();
+  }
   await page.waitForTimeout(500);
 }
