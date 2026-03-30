@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "node game/scorer.test.js && node game/evaluator.test.js && node game/royalty.test.js && node game/deck.test.js"
   },
   "dependencies": {
     "express": "^4.18.2",

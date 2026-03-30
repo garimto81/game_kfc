@@ -139,9 +139,9 @@ function scoreHand(players) {
       const royaltyDiffAB = results[idA].royalties.total - results[idB].royalties.total;
       const lineTotalA = lineScore.top + lineScore.mid + lineScore.bottom;
 
-      // 라인 + 스쿱 + 로열티를 score에 한 번만 가산
-      results[idA].score += lineTotalA + scoopBonusA + royaltyDiffAB;
-      results[idB].score -= (lineTotalA + scoopBonusA + royaltyDiffAB);
+      // 로열티 차이만 가산 (라인 점수 + 스쿱은 위에서 이미 적용됨)
+      results[idA].score += royaltyDiffAB;
+      results[idB].score -= royaltyDiffAB;
 
       results[idA].lineResults[idB] = {
         lines: {
