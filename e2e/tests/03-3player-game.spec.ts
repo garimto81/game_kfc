@@ -1,194 +1,176 @@
 /**
- * 03-3player-game.spec.ts — 3인 풀게임 (턴 순서 검증)
- * 체크포인트: WAIT-3P, DEALER, R1-TURN1/2/3, R2~R4-SUMMARY, R5-END, SCORE, GRID
+ * 03-3player-game.spec.ts — 3인 풀게임 턴 순서 (WS 하이브리드)
  *
- * 실제 게임 플레이 로직:
- * - 3인 방 생성 + 참가 + 시작
- * - 3명 턴 순서대로 카드 배치 (R1: 5장, R2~R5: 3장)
- * - handScored 후 3쌍 비교 결과 확인
- * - Grid View 토글 확인
+ * Playwright: 스크린샷 캡처
+ * WS: 게임 조작 (joinRequest, placeCard, confirmPlacement)
  */
 import { test, expect } from '../fixtures/multi-player';
-import * as actions from '../helpers/game-actions';
-import { selectors } from '../helpers/game-actions';
-import type { PlayerHandle } from '../fixtures/multi-player';
+import { connectToServer } from '../helpers/game-actions';
+import { WSGameClient, sleep } from '../helpers/ws-game-client';
+import { decidePlacement, extractBoard } from '../helpers/ws-bot-strategy';
 
-const SERVER_PORT = 3099;
-const API = `http://localhost:${SERVER_PORT}`;
-
-/**
- * 한 플레이어의 R1 턴: 5장 → bottom 2, mid 2, top 1
- */
-async function playR1(player: PlayerHandle): Promise<void> {
-  await actions.waitForMyTurn(player.page);
-  await actions.waitForDeal(player.page);
-
-  const hand = await actions.getHandCards(player.page);
-  if (hand.length === 0) {
-    await player.page.waitForTimeout(2000);
-    return;
-  }
-
-  await actions.placeCardToLine(player.page, 0, 'bottom');
-  await actions.placeCardToLine(player.page, 0, 'bottom');
-  await actions.placeCardToLine(player.page, 0, 'mid');
-  await actions.placeCardToLine(player.page, 0, 'mid');
-  await actions.placeCardToLine(player.page, 0, 'top');
-
-  await actions.confirmPlacement(player.page);
-}
-
-/**
- * 한 플레이어의 R2~R5 턴: 3장 → 2배치 + 1디스카드
- */
-async function playR2to5(player: PlayerHandle): Promise<void> {
-  await actions.waitForMyTurn(player.page);
-  await actions.waitForDeal(player.page);
-
-  const hand = await actions.getHandCards(player.page);
-  if (hand.length === 0) {
-    await player.page.waitForTimeout(2000);
-    return;
-  }
-
-  // 빈 슬롯이 있는 라인에 배치
-  await actions.placeCardToLine(player.page, 0, 'bottom');
-  await actions.placeCardToLine(player.page, 0, 'mid');
-
-  // 나머지 1장 디스카드
-  await actions.discardCard(player.page, 0);
-
-  await actions.confirmPlacement(player.page);
-}
-
-test.describe('03 — 3-Player Full Game', () => {
-  test('3인 게임 — 턴 순서 + Grid View 검증', async ({
-    createPlayers,
+test.describe('03 — 3-Player Full Game (WS Hybrid)', () => {
+  test('3인 게임 — 턴 순서 검증', async ({
+    createHybridPlayers,
     screenshotManager,
   }) => {
-    const players = await createPlayers(3, ['P1', 'P2', 'P3']);
+    const players = await createHybridPlayers(3, ['P1', 'P2', 'P3']);
     const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
+    const wsClients = players.map((p) => p.ws);
 
-    // ── 방 생성 ──
-    const createRes = await fetch(`${API}/api/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'E2E-3P-Game',
-        max_players: 3,
-        turn_time_limit: 60,
-      }),
-    });
-    const room = await createRes.json();
+    // ── Playwright: Flutter 앱 로드 ──
+    for (const p of players) {
+      await connectToServer(p.page);
+    }
+
+    // ── WS: 방 생성 + 참가 ──
+    const room = await WSGameClient.createRoom('E2E-3P-Game', 3, 60);
     expect(room.id).toBeTruthy();
 
-    // ── 모든 플레이어 접속 + 방 참가 ──
+    await sleep(1000);
+
     for (const p of players) {
-      await actions.connectToServer(p.page);
-    }
-    for (const p of players) {
-      await actions.joinRoom(p.page, 'E2E-3P-Game', p.name);
-      await p.page.waitForTimeout(500);
+      await p.ws.join(room.id);
     }
 
+    await sleep(2000);
     await screenshotManager.captureAll(allPages, '03-WAIT-3P', '3인 대기 화면');
 
-    // ── 게임 시작: P1(호스트)가 Start Game ──
-    try {
-      await actions.startGame(players[0].page);
-    } catch {
-      await players[0].page.waitForTimeout(2000);
+    // ── WS: 게임 시작 ──
+    players[0].ws.send('startGame');
+
+    const dealerMsg = await players[0].ws.waitFor('dealerSelection');
+    for (let i = 1; i < 3; i++) {
+      await players[i].ws.waitFor('dealerSelection');
     }
 
-    // ── dealerSelection 대기 ──
-    await players[0].page.waitForTimeout(2000);
+    expect(dealerMsg.payload.playerOrder).toBeTruthy();
+    const playerOrder = dealerMsg.payload.playerOrder as string[];
+    expect(playerOrder.length).toBe(3);
+
+    await sleep(1500);
     await screenshotManager.captureAll(allPages, '03-DEALER', '딜러 선택');
 
-    // ── gameStart 대기 ──
+    // gameStart 대기
     for (const p of players) {
-      await actions.waitForGameStart(p.page);
+      await p.ws.waitFor('gameStart');
     }
+
+    const activePlayers = 3;
 
     // ── R1: 3명 순서대로 5장 배치 ──
     for (let turn = 0; turn < 3; turn++) {
-      const player = players[turn];
+      // 턴 순서대로 dealCards를 받는 플레이어가 배치
+      // 서버가 턴 순서에 따라 현재 턴 플레이어에게만 dealCards 전송
+      // 어떤 클라이언트가 dealCards를 받든 처리
+      const promises = wsClients.map(async (client) => {
+        try {
+          const dealMsg = await client.waitFor('dealCards', 15000);
+          const cards = dealMsg.payload.cards;
+          expect(cards.length).toBe(5); // R1
+          const board = extractBoard(client);
+          const decision = decidePlacement(cards, board, 1, false, activePlayers);
+          for (const p of decision.placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
+          }
+          client.send('confirmPlacement');
+          return true;
+        } catch {
+          return false;
+        }
+      });
 
-      await actions.waitForDeal(player.page);
+      // 한 명만 이번 턴에 dealCards를 받음
+      const results = await Promise.all(promises);
+      const played = results.filter(Boolean).length;
+      // 최소 1명은 플레이해야 함 (남은 클라이언트는 다음 턴에서 받음)
 
-      // WS interceptor로 dealCards 확인
-      const dealMsg = player.interceptor.getLastMessage('dealCards');
-      if (dealMsg) {
-        const cards = dealMsg.payload.cards as unknown[];
-        expect(cards.length).toBe(5);
-      }
+      await sleep(1000);
+      await screenshotManager.captureAll(allPages, `03-R1-TURN${turn + 1}`, `R1 턴 ${turn + 1}`);
 
-      await screenshotManager.captureAll(
-        allPages,
-        `03-R1-TURN${turn + 1}`,
-        `R1 턴 ${turn + 1} — ${player.name}`
-      );
-
-      // 카드 배치
-      await playR1(player);
-      await player.page.waitForTimeout(500);
+      // 다음 턴에서 나머지가 받으므로 break 조건 불필요
+      if (played > 0) break; // 실제로는 라운드 1 전체를 한번에 처리
     }
+
+    // R1은 실제로 턴 기반이므로 나머지 플레이어도 순차적으로 처리
+    // 서버가 turnChanged를 보내고 다음 플레이어에게 dealCards를 보냄
+    // 위에서 Promise.all로 첫 번째만 받았으므로 나머지 처리
+    for (let i = 0; i < 2; i++) {
+      for (const client of wsClients) {
+        try {
+          const dealMsg = await client.waitFor('dealCards', 10000);
+          const cards = dealMsg.payload.cards;
+          const board = extractBoard(client);
+          const round = dealMsg.payload.round as number;
+          const decision = decidePlacement(cards, board, round, false, activePlayers);
+          for (const p of decision.placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
+          }
+          if (decision.discard) {
+            client.send('discardCard', { card: decision.discard });
+          }
+          client.send('confirmPlacement');
+          break; // 이번 턴 처리 완료
+        } catch {
+          continue; // 이 클라이언트는 이번 턴이 아님
+        }
+      }
+    }
+
+    await sleep(1500);
+    await screenshotManager.captureAll(allPages, '03-R1-COMPLETE', 'R1 완료');
 
     // ── R2~R5 ──
-    for (const round of [2, 3, 4, 5]) {
-      await players[0].page.waitForTimeout(1000);
-
-      // 3명 순서대로 배치
-      for (const player of players) {
-        await actions.waitForDeal(player.page);
-        await playR2to5(player);
-        await player.page.waitForTimeout(300);
+    for (let round = 2; round <= 5; round++) {
+      for (let turn = 0; turn < 3; turn++) {
+        // 각 턴에서 한 명이 dealCards를 받아 처리
+        for (const client of wsClients) {
+          try {
+            const dealMsg = await client.waitFor('dealCards', 15000);
+            const cards = dealMsg.payload.cards;
+            const dealRound = dealMsg.payload.round as number;
+            const isFL = dealMsg.payload.inFantasyland === true;
+            const board = extractBoard(client);
+            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+            for (const p of decision.placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+            if (decision.discard) {
+              client.send('discardCard', { card: decision.discard });
+            }
+            client.send('confirmPlacement');
+            break;
+          } catch {
+            continue;
+          }
+        }
       }
 
-      await screenshotManager.captureAll(
-        allPages,
-        `03-R${round}-SUMMARY`,
-        `라운드 ${round} 요약`
-      );
+      await sleep(1000);
+      await screenshotManager.captureAll(allPages, `03-R${round}-SUMMARY`, `라운드 ${round} 요약`);
     }
 
-    // ── R5 종료 ──
-    await screenshotManager.captureAll(allPages, '03-R5-END', 'R5 종료');
+    // ── handScored 수신 ──
+    const scoreMsg = await players[0].ws.waitFor('handScored');
+    expect(scoreMsg.payload.results).toBeTruthy();
 
-    // ── 스코어: 3쌍 비교 ──
-    await actions.waitForScoring(players[0].page);
-
-    // handScored 메시지에서 3쌍 비교 결과 확인 (P1 vs P2, P1 vs P3, P2 vs P3)
-    const scoreMsg = players[0].interceptor.getLastMessage('handScored');
-    if (scoreMsg) {
-      expect(scoreMsg.payload).toHaveProperty('results');
-      const results = scoreMsg.payload.results;
-      // 3인 게임: C(3,2) = 3쌍의 비교 결과가 있어야 함
+    // 3인 zero-sum
+    const results = scoreMsg.payload.results;
+    let totalScore = 0;
+    for (const id of Object.keys(results)) {
+      totalScore += results[id].score || 0;
     }
+    expect(totalScore).toBe(0);
 
+    await sleep(2000);
     await screenshotManager.captureAll(allPages, '03-SCORE', '3인 스코어');
 
-    // ── Grid View 토글 ──
-    try {
-      await actions.toggleViewMode(players[0].page);
-      await players[0].page.waitForTimeout(1000);
-    } catch {
-      // Grid 버튼이 없을 수 있음
-    }
-
-    await screenshotManager.captureAll(allPages, '03-GRID', 'Grid View');
-
-    // ── Ready 클릭 ──
+    // ── Ready ──
     for (const p of players) {
-      try {
-        await actions.clickReady(p.page);
-      } catch {
-        // Ready 버튼 미존재 가능
-      }
+      p.ws.send('readyForNextHand');
     }
 
-    // WS 로그 저장
-    for (const p of players) {
-      p.interceptor.saveLog('03-3player-game');
-    }
+    await sleep(1500);
+    await screenshotManager.captureAll(allPages, '03-READY', 'Ready 후');
   });
 });

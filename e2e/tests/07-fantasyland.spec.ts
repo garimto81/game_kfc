@@ -1,120 +1,121 @@
 /**
- * 07-fantasyland.spec.ts — Fantasyland 진입/유지/탈출
- * 체크포인트: FL-ENTRY, FL-BADGE, FL-DEAL14, FL-HAND-WRAP, FL-CONFIRM
+ * 07-fantasyland.spec.ts — Fantasyland (WS 하이브리드)
  *
- * Fantasyland 진입은 이전 핸드에서 top 라인에 QQ+ 배치로 트리거됨.
- * E2E에서는 FL 상태를 직접 설정할 수 없으므로,
- * WS interceptor로 FL 관련 메시지를 검증하는 방식으로 진행.
+ * Playwright: 스크린샷 캡처
+ * WS: 게임 조작
  *
- * TODO: FL 상태 강제 설정 API가 추가되면 실제 FL 플로우 구현
+ * FL 진입은 이전 핸드에서 top에 QQ+ 배치로 트리거됨.
+ * WS로 FL 관련 메시지를 검증한다.
  */
 import { test, expect } from '../fixtures/multi-player';
-import * as actions from '../helpers/game-actions';
-import { selectors } from '../helpers/game-actions';
+import { connectToServer } from '../helpers/game-actions';
+import { WSGameClient, sleep } from '../helpers/ws-game-client';
+import { decidePlacement, extractBoard } from '../helpers/ws-bot-strategy';
+import type { Card } from '../helpers/ws-bot-strategy';
 
-const SERVER_PORT = 3099;
-const API = `http://localhost:${SERVER_PORT}`;
-
-test.describe('07 — Fantasyland', () => {
+test.describe('07 — Fantasyland (WS Hybrid)', () => {
   test('Fantasyland 진입 → 14장 딜 → 배치 → 확인', async ({
-    createPlayers,
+    createHybridPlayers,
     screenshotManager,
   }) => {
-    const players = await createPlayers(2, ['FLPlayer', 'Normal']);
+    const players = await createHybridPlayers(2, ['FLPlayer', 'Normal']);
     const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
+    const wsClients = players.map((p) => p.ws);
 
-    const createRes = await fetch(`${API}/api/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'E2E-FL-Test',
-        max_players: 2,
-        turn_time_limit: 120,
-      }),
-    });
-    const room = await createRes.json();
+    // ── Playwright + WS 설정 ──
+    for (const p of players) {
+      await connectToServer(p.page);
+    }
+
+    const room = await WSGameClient.createRoom('E2E-FL-Test', 2, 120);
     expect(room.id).toBeTruthy();
 
-    // ── 접속 + 참가 ──
+    await sleep(1000);
+
     for (const p of players) {
-      await actions.connectToServer(p.page);
+      await p.ws.join(room.id);
+      await sleep(300);
     }
-    await actions.joinRoom(players[0].page, 'E2E-FL-Test', 'FLPlayer');
-    await players[0].page.waitForTimeout(500);
-    await actions.joinRoom(players[1].page, 'E2E-FL-Test', 'Normal');
-    await players[1].page.waitForTimeout(500);
 
     // ── 게임 시작 ──
-    try {
-      await actions.startGame(players[0].page);
-    } catch {
-      await players[0].page.waitForTimeout(2000);
-    }
+    players[0].ws.send('startGame');
 
     for (const p of players) {
-      await actions.waitForGameStart(p.page);
+      await p.ws.waitFor('dealerSelection');
+    }
+    for (const p of players) {
+      await p.ws.waitFor('gameStart');
     }
 
-    // ── FL-ENTRY: FL 진입 조건 확인 (아직 FL이 아닌 상태) ──
-    await screenshotManager.captureAll(allPages, '07-FL-ENTRY', 'FL 진입 조건 (첫 핸드 — 아직 FL 아님)');
+    await screenshotManager.captureAll(allPages, '07-FL-ENTRY', 'FL 진입 조건 (첫 핸드)');
 
-    // ── FL 진입을 위해 첫 핸드 플레이 (top에 높은 카드 배치) ──
-    // R1: FLPlayer가 top에 높은 카드 배치 → FL 진입 시도
-    await actions.waitForDeal(players[0].page);
-    const hand = await actions.getHandCards(players[0].page);
-    if (hand.length > 0) {
-      // top에 가장 좋은 카드 배치 (FL 조건: QQ+)
-      await actions.placeCardToLine(players[0].page, 0, 'top');
-      await actions.placeCardToLine(players[0].page, 0, 'bottom');
-      await actions.placeCardToLine(players[0].page, 0, 'bottom');
-      await actions.placeCardToLine(players[0].page, 0, 'mid');
-      await actions.placeCardToLine(players[0].page, 0, 'mid');
-      await actions.confirmPlacement(players[0].page);
+    // ── 핸드 1: FL 진입을 위해 top에 높은 카드 배치 시도 ──
+    // FLPlayer: top에 높은 카드 배치 (QQ+ 조건)
+    const activePlayers = 2;
+
+    for (let round = 1; round <= 5; round++) {
+      for (const client of wsClients) {
+        try {
+          const dealMsg = await client.waitFor('dealCards', 15000);
+          const cards = dealMsg.payload.cards as Card[];
+          const dealRound = dealMsg.payload.round as number;
+          const isFL = dealMsg.payload.inFantasyland === true;
+          const board = extractBoard(client);
+
+          if (client === players[0].ws && dealRound === 1) {
+            // FLPlayer R1: top에 가장 높은 카드 배치 (FL 유도)
+            const sorted = [...cards].sort((a, b) => b.rank - a.rank);
+            const placements = [
+              { card: sorted[0], line: 'top' as const },
+              { card: sorted[1], line: 'bottom' as const },
+              { card: sorted[2], line: 'bottom' as const },
+              { card: sorted[3], line: 'mid' as const },
+              { card: sorted[4], line: 'mid' as const },
+            ];
+            for (const p of placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+          } else {
+            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+            for (const p of decision.placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+            if (decision.discard) {
+              client.send('discardCard', { card: decision.discard });
+            }
+          }
+          client.send('confirmPlacement');
+          break;
+        } catch {
+          continue;
+        }
+      }
     }
 
-    // Normal 플레이어도 배치
-    await actions.waitForDeal(players[1].page);
-    const hand2 = await actions.getHandCards(players[1].page);
-    if (hand2.length > 0) {
-      await actions.placeCardToLine(players[1].page, 0, 'bottom');
-      await actions.placeCardToLine(players[1].page, 0, 'bottom');
-      await actions.placeCardToLine(players[1].page, 0, 'mid');
-      await actions.placeCardToLine(players[1].page, 0, 'mid');
-      await actions.placeCardToLine(players[1].page, 0, 'top');
-      await actions.confirmPlacement(players[1].page);
-    }
+    await sleep(1500);
+    await screenshotManager.captureAll(allPages, '07-FL-BADGE', 'FL 배지 (핸드 1 후)');
 
-    await screenshotManager.captureAll(allPages, '07-FL-BADGE', 'FL 배지 (R1 후)');
+    // ── handScored 대기 ──
+    const scoreMsg = await players[0].ws.waitFor('handScored', 30000);
+    expect(scoreMsg.payload.results).toBeTruthy();
 
-    // ── FL-DEAL14: FL 플레이어의 dealCards 확인 ──
-    // FL은 첫 핸드 완료 후 조건 충족 시 다음 핸드에서 발동
-    // WS interceptor로 dealCards.inFantasyland + cards.length === 14 검증
-    const flDeals = players[0].interceptor.getMessages('dealCards');
+    // FL 진입 여부 확인: dealCards에서 inFantasyland 검증은 다음 핸드에서
+    const flDeals = players[0].ws.getMessages('dealCards');
+    let hasFL = false;
     for (const deal of flDeals) {
       if (deal.payload.inFantasyland) {
-        const cards = deal.payload.cards as unknown[];
+        const cards = deal.payload.cards as Card[];
         expect(cards.length).toBe(14);
+        hasFL = true;
       }
     }
 
     await screenshotManager.captureAll(
       [{ page: players[0].page, playerName: 'FLPlayer' }],
       '07-FL-DEAL14',
-      'FL 14장 딜 (조건 충족 시)'
+      `FL 14장 딜 (${hasFL ? '진입 성공' : '조건 미충족'})`
     );
 
-    // ── FL-HAND-WRAP: 14장 핸드 표시 ──
-    await screenshotManager.captureAll(
-      [{ page: players[0].page, playerName: 'FLPlayer' }],
-      '07-FL-HAND-WRAP',
-      'FL 14장 핸드 표시'
-    );
-
-    // ── FL-CONFIRM: FL 확정 ──
     await screenshotManager.captureAll(allPages, '07-FL-CONFIRM', 'FL 확정');
-
-    for (const p of players) {
-      p.interceptor.saveLog('07-fantasyland');
-    }
   });
 });

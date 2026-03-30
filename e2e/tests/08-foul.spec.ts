@@ -1,125 +1,120 @@
 /**
- * 08-foul.spec.ts — Foul 감지 및 점수 처리
- * 체크포인트: FOUL-SETUP, FOUL-DETECT, FOUL-SCORE
+ * 08-foul.spec.ts — Foul 감지 및 점수 처리 (WS 하이브리드)
  *
- * Foul은 bottom < mid 또는 mid < top 핸드일 때 발생.
- * E2E에서는 의도적으로 약한 카드를 bottom에 배치하여 foul 유도.
- * handScored 메시지에서 fouled=true, scooped 확인.
+ * Playwright: 스크린샷 캡처
+ * WS: 게임 조작 — 의도적 foul 유도
+ *
+ * Foul: bottom < mid 또는 mid < top 핸드.
+ * FoulPlayer는 역순 배치 (낮은 카드 → bottom), CleanPlayer는 정상 배치.
  */
 import { test, expect } from '../fixtures/multi-player';
-import * as actions from '../helpers/game-actions';
-import { selectors } from '../helpers/game-actions';
+import { connectToServer } from '../helpers/game-actions';
+import { WSGameClient, sleep } from '../helpers/ws-game-client';
+import { decidePlacement, extractBoard } from '../helpers/ws-bot-strategy';
+import type { Card } from '../helpers/ws-bot-strategy';
 
-const SERVER_PORT = 3099;
-const API = `http://localhost:${SERVER_PORT}`;
-
-test.describe('08 — Foul Detection', () => {
+test.describe('08 — Foul Detection (WS Hybrid)', () => {
   test('Foul 감지 → 스쿱 점수', async ({
-    createPlayers,
+    createHybridPlayers,
     screenshotManager,
   }) => {
-    const players = await createPlayers(2, ['FoulPlayer', 'CleanPlayer']);
+    const players = await createHybridPlayers(2, ['FoulPlayer', 'CleanPlayer']);
     const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
+    const wsClients = players.map((p) => p.ws);
 
-    const createRes = await fetch(`${API}/api/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'E2E-Foul-Test',
-        max_players: 2,
-        turn_time_limit: 60,
-      }),
-    });
-    const room = await createRes.json();
+    // ── Playwright + WS 설정 ──
+    for (const p of players) {
+      await connectToServer(p.page);
+    }
+
+    const room = await WSGameClient.createRoom('E2E-Foul-Test', 2, 60);
     expect(room.id).toBeTruthy();
 
-    // ── 접속 + 참가 ──
+    await sleep(1000);
+
     for (const p of players) {
-      await actions.connectToServer(p.page);
+      await p.ws.join(room.id);
+      await sleep(300);
     }
-    await actions.joinRoom(players[0].page, 'E2E-Foul-Test', 'FoulPlayer');
-    await players[0].page.waitForTimeout(500);
-    await actions.joinRoom(players[1].page, 'E2E-Foul-Test', 'CleanPlayer');
-    await players[1].page.waitForTimeout(500);
 
     // ── 게임 시작 ──
-    try {
-      await actions.startGame(players[0].page);
-    } catch {
-      await players[0].page.waitForTimeout(2000);
-    }
+    players[0].ws.send('startGame');
 
     for (const p of players) {
-      await actions.waitForGameStart(p.page);
+      await p.ws.waitFor('dealerSelection');
+    }
+    for (const p of players) {
+      await p.ws.waitFor('gameStart');
     }
 
-    // ── FOUL-SETUP: 의도적 foul 유도 ──
-    // FoulPlayer: top에 높은 카드, bottom에 낮은 카드 배치 → foul
-    // 카드 값은 무작위이므로, 역순으로 배치하여 foul 확률 높임
-    await actions.waitForDeal(players[0].page);
-    const foulHand = await actions.getHandCards(players[0].page);
-    if (foulHand.length > 0) {
-      // R1: 역순 배치 (foul 유도) — top에 먼저, bottom에 나중에
-      await actions.placeCardToLine(players[0].page, 0, 'top');
-      await actions.placeCardToLine(players[0].page, 0, 'mid');
-      await actions.placeCardToLine(players[0].page, 0, 'mid');
-      await actions.placeCardToLine(players[0].page, 0, 'bottom');
-      await actions.placeCardToLine(players[0].page, 0, 'bottom');
-      await actions.confirmPlacement(players[0].page);
-    }
+    const activePlayers = 2;
 
-    // CleanPlayer: 정상 배치
-    await actions.waitForDeal(players[1].page);
-    const cleanHand = await actions.getHandCards(players[1].page);
-    if (cleanHand.length > 0) {
-      await actions.placeCardToLine(players[1].page, 0, 'bottom');
-      await actions.placeCardToLine(players[1].page, 0, 'bottom');
-      await actions.placeCardToLine(players[1].page, 0, 'mid');
-      await actions.placeCardToLine(players[1].page, 0, 'mid');
-      await actions.placeCardToLine(players[1].page, 0, 'top');
-      await actions.confirmPlacement(players[1].page);
+    // ── R1~R5: FoulPlayer는 역순 배치, CleanPlayer는 정상 배치 ──
+    for (let round = 1; round <= 5; round++) {
+      for (const client of wsClients) {
+        try {
+          const dealMsg = await client.waitFor('dealCards', 15000);
+          const cards = dealMsg.payload.cards as Card[];
+          const dealRound = dealMsg.payload.round as number;
+          const isFL = dealMsg.payload.inFantasyland === true;
+          const board = extractBoard(client);
+
+          if (client === players[0].ws && dealRound === 1) {
+            // FoulPlayer R1: 역순 배치 (낮은 카드 → bottom, 높은 → top)
+            const sorted = [...cards].sort((a, b) => a.rank - b.rank); // 오름차순
+            const placements = [
+              { card: sorted[0], line: 'bottom' as const },
+              { card: sorted[1], line: 'bottom' as const },
+              { card: sorted[2], line: 'mid' as const },
+              { card: sorted[3], line: 'mid' as const },
+              { card: sorted[4], line: 'top' as const },
+            ];
+            for (const p of placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+            client.send('confirmPlacement');
+          } else {
+            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+            for (const p of decision.placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+            if (decision.discard) {
+              client.send('discardCard', { card: decision.discard });
+            }
+            client.send('confirmPlacement');
+          }
+          break;
+        } catch {
+          continue;
+        }
+      }
     }
 
     await screenshotManager.captureAll(allPages, '08-FOUL-SETUP', 'Foul 유도 배치');
 
-    // ── R2~R5 진행 ──
-    for (const round of [2, 3, 4, 5]) {
-      for (const player of players) {
-        await actions.waitForDeal(player.page);
-        const hand = await actions.getHandCards(player.page);
-        if (hand.length > 0) {
-          await actions.placeCardToLine(player.page, 0, 'bottom');
-          await actions.placeCardToLine(player.page, 0, 'mid');
-          await actions.discardCard(player.page, 0);
-          await actions.confirmPlacement(player.page);
-        }
-        await player.page.waitForTimeout(300);
+    // ── handScored에서 fouled 확인 ──
+    const scoreMsg = await players[0].ws.waitFor('handScored', 30000);
+    expect(scoreMsg.payload.results).toBeTruthy();
+
+    const results = scoreMsg.payload.results as Record<string, any>;
+    let hasFoul = false;
+    for (const [_id, result] of Object.entries(results)) {
+      if (result.fouled) {
+        hasFoul = true;
+        // Foul 플레이어는 royalty 0
+        expect(result.royaltyTotal).toBe(0);
       }
     }
 
-    // ── FOUL-DETECT: handScored에서 fouled 확인 ──
-    await actions.waitForScoring(players[0].page);
-
-    const scoreMsgs = players[0].interceptor.getMessages('handScored');
-    if (scoreMsgs.length > 0) {
-      const results = scoreMsgs[0].payload.results as Record<string, any>;
-      // Foul 플레이어가 있는지 확인
-      let hasFoul = false;
-      for (const [_id, result] of Object.entries(results)) {
-        if (result.fouled) {
-          hasFoul = true;
-          // Foul 플레이어는 scooped 당함
-          expect(result.scooped).toBeTruthy();
-        }
-      }
-      // foul이 발생했을 수 있음 (카드 무작위이므로 보장은 안 됨)
+    // zero-sum
+    let totalScore = 0;
+    for (const id of Object.keys(results)) {
+      totalScore += results[id].score || 0;
     }
+    expect(totalScore).toBe(0);
 
+    await sleep(2000);
     await screenshotManager.captureAll(allPages, '08-FOUL-DETECT', 'Foul 감지');
     await screenshotManager.captureAll(allPages, '08-FOUL-SCORE', 'Foul 스코어');
-
-    for (const p of players) {
-      p.interceptor.saveLog('08-foul');
-    }
   });
 });

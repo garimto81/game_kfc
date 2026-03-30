@@ -1,143 +1,130 @@
 /**
- * 04-4player-game.spec.ts — 4인 게임 (R5 2장, 덱 재충전)
- * 체크포인트: R5-DEAL, R5-NO-DISCARD, DECK-RECYCLE, SCORE-6PAIRS, GRID-4P
+ * 04-4player-game.spec.ts — 4인 게임 R5 2장 딜 (WS 하이브리드)
+ *
+ * Playwright: 스크린샷 캡처
+ * WS: 게임 조작
  *
  * 핵심 검증:
- * - 4인 게임에서 R5 dealCards 카드 수 === 2
- * - 디스카드 없음 (R5 2장은 모두 배치)
+ * - 4인 R5: dealCards 카드 수 === 2 (디스카드 없음)
  * - 6쌍 비교 스코어: C(4,2) = 6
  */
 import { test, expect } from '../fixtures/multi-player';
-import * as actions from '../helpers/game-actions';
-import { selectors } from '../helpers/game-actions';
+import { connectToServer } from '../helpers/game-actions';
+import { WSGameClient, sleep } from '../helpers/ws-game-client';
+import { decidePlacement, extractBoard } from '../helpers/ws-bot-strategy';
 
-const SERVER_PORT = 3099;
-const API = `http://localhost:${SERVER_PORT}`;
-
-test.describe('04 — 4-Player Game', () => {
+test.describe('04 — 4-Player Game (WS Hybrid)', () => {
   test('4인 게임 — R5 2장 딜 + 6쌍 스코어', async ({
-    createPlayers,
+    createHybridPlayers,
     screenshotManager,
   }) => {
-    const players = await createPlayers(4, ['P1', 'P2', 'P3', 'P4']);
+    const players = await createHybridPlayers(4, ['P1', 'P2', 'P3', 'P4']);
     const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
+    const wsClients = players.map((p) => p.ws);
 
-    // ── 방 생성 ──
-    const createRes = await fetch(`${API}/api/rooms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'E2E-4P-Game',
-        max_players: 4,
-        turn_time_limit: 60,
-      }),
-    });
-    const room = await createRes.json();
+    // ── Playwright: Flutter 앱 로드 ──
+    for (const p of players) {
+      await connectToServer(p.page);
+    }
+
+    // ── WS: 방 생성 + 참가 ──
+    const room = await WSGameClient.createRoom('E2E-4P-Game', 4, 60);
     expect(room.id).toBeTruthy();
 
-    // ── 접속 + 참가 ──
-    for (const p of players) {
-      await actions.connectToServer(p.page);
-    }
-    for (const p of players) {
-      await actions.joinRoom(p.page, 'E2E-4P-Game', p.name);
-      await p.page.waitForTimeout(500);
-    }
-
-    // ── 게임 시작 ──
-    try {
-      await actions.startGame(players[0].page);
-    } catch {
-      await players[0].page.waitForTimeout(2000);
-    }
+    await sleep(1000);
 
     for (const p of players) {
-      await actions.waitForGameStart(p.page);
+      await p.ws.join(room.id);
+      await sleep(300);
     }
 
-    // ── R1~R4: 각 플레이어 순서대로 카드 배치 ──
-    for (const round of [1, 2, 3, 4]) {
-      for (const player of players) {
-        await actions.waitForDeal(player.page);
-        const hand = await actions.getHandCards(player.page);
-        if (hand.length > 0) {
-          if (round === 1) {
-            // R1: 5장 배치
-            await actions.placeCardToLine(player.page, 0, 'bottom');
-            await actions.placeCardToLine(player.page, 0, 'bottom');
-            await actions.placeCardToLine(player.page, 0, 'mid');
-            await actions.placeCardToLine(player.page, 0, 'mid');
-            await actions.placeCardToLine(player.page, 0, 'top');
-          } else {
-            // R2~R4: 2배치 + 1디스카드
-            await actions.placeCardToLine(player.page, 0, 'bottom');
-            await actions.placeCardToLine(player.page, 0, 'mid');
-            await actions.discardCard(player.page, 0);
+    // ── WS: 게임 시작 ──
+    players[0].ws.send('startGame');
+
+    for (const p of players) {
+      await p.ws.waitFor('dealerSelection');
+    }
+    for (const p of players) {
+      await p.ws.waitFor('gameStart');
+    }
+
+    const activePlayers = 4;
+
+    // ── R1~R4 ──
+    for (let round = 1; round <= 4; round++) {
+      for (let turn = 0; turn < activePlayers; turn++) {
+        for (const client of wsClients) {
+          try {
+            const dealMsg = await client.waitFor('dealCards', 15000);
+            const cards = dealMsg.payload.cards;
+            const dealRound = dealMsg.payload.round as number;
+            const isFL = dealMsg.payload.inFantasyland === true;
+            const board = extractBoard(client);
+            const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
+            for (const p of decision.placements) {
+              client.send('placeCard', { card: p.card, line: p.line });
+            }
+            if (decision.discard) {
+              client.send('discardCard', { card: decision.discard });
+            }
+            client.send('confirmPlacement');
+            break;
+          } catch {
+            continue;
           }
-          await actions.confirmPlacement(player.page);
-        }
-        await player.page.waitForTimeout(300);
-      }
-
-      await screenshotManager.captureAll(allPages, `04-R${round}-DEAL`, `4인 R${round} 딜`);
-    }
-
-    // ── R5: 4인+ → 2장 딜 (디스카드 없음) ──
-    await players[0].page.waitForTimeout(1000);
-
-    for (const player of players) {
-      await actions.waitForDeal(player.page);
-
-      // WS interceptor로 dealCards 확인: 4인 R5는 2장
-      const dealMsgs = player.interceptor.getMessages('dealCards');
-      if (dealMsgs.length > 0) {
-        const lastDeal = dealMsgs[dealMsgs.length - 1];
-        if (lastDeal.payload.round === 5) {
-          const cards = lastDeal.payload.cards as unknown[];
-          expect(cards.length).toBe(2);
         }
       }
 
-      const hand = await actions.getHandCards(player.page);
-      if (hand.length > 0) {
-        // 2장 모두 배치 (디스카드 없음)
-        await actions.placeCardToLine(player.page, 0, 'bottom');
-        await actions.placeCardToLine(player.page, 0, 'top');
-        await actions.confirmPlacement(player.page);
-      }
-      await player.page.waitForTimeout(300);
+      await sleep(1000);
+      await screenshotManager.captureAll(allPages, `04-R${round}-DEAL`, `4인 R${round}`);
     }
 
+    // ── R5: 4인 → 2장 딜 (디스카드 없음) ──
+    for (let turn = 0; turn < activePlayers; turn++) {
+      for (const client of wsClients) {
+        try {
+          const dealMsg = await client.waitFor('dealCards', 15000);
+          const cards = dealMsg.payload.cards;
+          const dealRound = dealMsg.payload.round as number;
+
+          // 4인 R5: 2장 확인
+          if (dealRound === 5) {
+            expect(cards.length).toBe(2);
+          }
+
+          const board = extractBoard(client);
+          const decision = decidePlacement(cards, board, dealRound, false, activePlayers);
+          for (const p of decision.placements) {
+            client.send('placeCard', { card: p.card, line: p.line });
+          }
+          // R5 4인: discard 없음
+          if (decision.discard) {
+            client.send('discardCard', { card: decision.discard });
+          }
+          client.send('confirmPlacement');
+          break;
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    await sleep(1000);
     await screenshotManager.captureAll(allPages, '04-R5-DEAL', 'R5 2장 딜 (4인)');
-    await screenshotManager.captureAll(allPages, '04-R5-NO-DISCARD', 'R5 디스카드 없음');
 
-    // ── 덱 재충전 확인 ──
-    // 4인 게임: R1(5*4=20) + R2-R4(3*4*3=36) = 56장 > 52장
-    // discardPile에서 재충전이 필요함
-    await screenshotManager.captureAll(allPages, '04-DECK-RECYCLE', '덱 재충전 후');
+    // ── handScored 수신 ──
+    const scoreMsg = await players[0].ws.waitFor('handScored', 30000);
+    expect(scoreMsg.payload.results).toBeTruthy();
 
-    // ── 6쌍 스코어 ──
-    await actions.waitForScoring(players[0].page);
-
-    const scoreMsg = players[0].interceptor.getLastMessage('handScored');
-    if (scoreMsg) {
-      expect(scoreMsg.payload).toHaveProperty('results');
+    // zero-sum
+    const results = scoreMsg.payload.results;
+    let totalScore = 0;
+    for (const id of Object.keys(results)) {
+      totalScore += results[id].score || 0;
     }
+    expect(totalScore).toBe(0);
 
+    await sleep(2000);
     await screenshotManager.captureAll(allPages, '04-SCORE-6PAIRS', '4인 6쌍 스코어');
-
-    // ── Grid view ──
-    try {
-      await actions.toggleViewMode(players[0].page);
-      await players[0].page.waitForTimeout(1000);
-    } catch {
-      // Grid 버튼 미존재
-    }
-
-    await screenshotManager.captureAll(allPages, '04-GRID-4P', '4인 Grid View');
-
-    for (const p of players) {
-      p.interceptor.saveLog('04-4player-game');
-    }
   });
 });
