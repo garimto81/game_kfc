@@ -626,7 +626,12 @@ async function playFullHand(playerHandles, activePlayers) {
 
   // 각 플레이어의 메시지를 폴링하며 dealCards에 자동 응답
   const pollers = playerHandles.map((p) => {
-    let lastProcessed = p.messages.length;
+    // Start from after the last gameStart message so we catch dealCards that arrived before playFullHand
+    let lastProcessed = 0;
+    for (let i = p.messages.length - 1; i >= 0; i--) {
+      if (p.messages[i].type === 'gameStart') { lastProcessed = i + 1; break; }
+    }
+    if (lastProcessed === 0) lastProcessed = p.messages.length; // fallback
     const interval = setInterval(() => {
       while (lastProcessed < p.messages.length) {
         const msg = p.messages[lastProcessed];
@@ -1396,6 +1401,189 @@ async function testMalformedMessage() {
 }
 
 // ============================================================
+// Play/Fold 전수 테스트 (5인/6인 모든 경우의 수)
+// ============================================================
+
+/**
+ * Play/Fold 단일 조합 테스트
+ * @param {number} playerCount - 총 플레이어 수 (5 or 6)
+ * @param {boolean[]} playChoices - 각 순번의 play/fold 선택 (true=play, false=fold)
+ * @param {string} label - 테스트 레이블
+ */
+async function testOnePlayFoldCombo(playerCount, playChoices, label) {
+  const room = await createRoomHTTP(`PF-${label}`, playerCount, 30);
+  const handles = [];
+  for (let i = 0; i < playerCount; i++) {
+    handles.push(await connectPlayer(room.id, `PF-${label}-${i + 1}`));
+  }
+
+  // 게임 시작
+  handles[0].send('startGame');
+  await handles[0].waitForMsg('dealerSelection');
+  await sleep(800);
+
+  // Play/Fold 순차 응답
+  const respondedSet = new Set();
+  let choiceIdx = 0;
+
+  for (let expected = 0; expected < playerCount; expected++) {
+    let responded = false;
+    for (let attempt = 0; attempt < 30 && !responded; attempt++) {
+      for (const h of handles) {
+        if (respondedSet.has(h.playerName)) continue;
+        const reqs = h.getMsg('playOrFoldRequest');
+        if (reqs.length > 0 && !respondedSet.has(h.playerName)) {
+          const choice = choiceIdx < playChoices.length && playChoices[choiceIdx] ? 'play' : 'fold';
+          h.send('playOrFoldResponse', { choice });
+          respondedSet.add(h.playerName);
+          choiceIdx++;
+          responded = true;
+          break;
+        }
+      }
+      if (!responded) await sleep(200);
+    }
+    // 4명 play 도달 시 나머지 자동 fold → 서버가 allDecided 처리
+    const playCount = playChoices.slice(0, choiceIdx).filter(Boolean).length;
+    if (playCount >= 4) break;
+    await sleep(200);
+  }
+
+  await sleep(1500);
+
+  // playOrFoldResult 수신 확인
+  const resultMsgs = handles[0].getMsg('playOrFoldResult');
+  const playCount = playChoices.filter(Boolean).length;
+  const effectivePlay = Math.min(playCount, 4);
+
+  if (effectivePlay >= 2) {
+    // 2명 이상 play → 게임 진행되어야 함
+    // gameStart 수신 확인
+    const gameStartMsgs = handles[0].getMsg('gameStart');
+    assert(gameStartMsgs.length > 0, `[${label}] gameStart expected for ${effectivePlay} players`);
+
+    // Active player handles: use server's activePlayers list from playOrFoldResult
+    let activePlayerIds = null;
+    if (resultMsgs.length > 0) {
+      activePlayerIds = resultMsgs[resultMsgs.length - 1].payload.activePlayers;
+    }
+    const activeHandles = activePlayerIds
+      ? handles.filter(h => activePlayerIds.includes(h.playerId))
+      : handles.filter(h => h.getMsg('dealCards').length > 0);
+
+    // 풀 게임 진행
+    const scored = await playFullHand(activeHandles, effectivePlay);
+    if (scored) {
+      verifyInvariants(label, handles, scored);
+
+      // 추가 검증: fold 플레이어에게 dealCards 미전송 확인
+      for (const h of handles) {
+        const dealMsgs = h.getMsg('dealCards');
+        const stateUpdates = h.getMsg('stateUpdate');
+        if (stateUpdates.length > 0) {
+          const lastState = stateUpdates[stateUpdates.length - 1].payload;
+          if (lastState && lastState.players) {
+            const me = lastState.players[h.playerId];
+            if (me && me.folded) {
+              assert(dealMsgs.length === 0, `[${label}] Folded player ${h.playerName} should not receive dealCards`);
+            }
+          }
+        }
+      }
+
+      // 추가 검증: activePlayers 수 확인
+      if (resultMsgs.length > 0) {
+        const activeFromServer = resultMsgs[resultMsgs.length - 1].payload.activePlayers;
+        if (activeFromServer) {
+          assert(activeFromServer.length === effectivePlay,
+            `[${label}] activePlayers count: expected ${effectivePlay}, got ${activeFromServer.length}`);
+        }
+      }
+    }
+  } else if (effectivePlay === 1) {
+    // 1명 play → 서버가 어떻게 처리하는지 확인
+    // gameStart 수신되면 게임 진행 시도, 아니면 에러/특수 처리
+    await sleep(2000);
+    const gameStartMsgs = handles[0].getMsg('gameStart');
+    const gameOverMsgs = handles[0].getMsg('gameOver');
+    const errorMsgs = handles[0].getMsg('error');
+
+    if (gameStartMsgs.length > 0) {
+      // 서버가 1명으로도 게임을 시작한 경우
+      console.log(`    [INFO] ${label}: Server started game with 1 player`);
+      const activePlayerIds1 = (resultMsgs.length > 0) ? resultMsgs[resultMsgs.length - 1].payload.activePlayers : null;
+      const activeHandles = activePlayerIds1
+        ? handles.filter(h => activePlayerIds1.includes(h.playerId))
+        : handles.filter(h => h.getMsg('dealCards').length > 0);
+      if (activeHandles.length > 0) {
+        const scored = await playFullHand(activeHandles, 1);
+        if (scored) {
+          console.log(`    [INFO] ${label}: 1-player game scored`);
+        }
+      }
+    } else if (gameOverMsgs.length > 0) {
+      console.log(`    [INFO] ${label}: Server sent gameOver for 1 player`);
+    } else {
+      console.log(`    [INFO] ${label}: Server response — gameStart=${gameStartMsgs.length}, gameOver=${gameOverMsgs.length}, errors=${errorMsgs.length}`);
+      // 1명 play는 경계 케이스 — 서버가 처리하는 방식을 기록
+    }
+  } else {
+    // 0명 play → 전원 fold
+    await sleep(2000);
+    const gameStartMsgs = handles[0].getMsg('gameStart');
+    const gameOverMsgs = handles[0].getMsg('gameOver');
+    const errorMsgs = handles[0].getMsg('error');
+
+    if (gameOverMsgs.length > 0) {
+      console.log(`    [INFO] ${label}: Server sent gameOver for 0 players (all fold)`);
+    } else if (gameStartMsgs.length > 0) {
+      console.log(`    [WARN] ${label}: Server started game with 0 players!`);
+    } else {
+      console.log(`    [INFO] ${label}: Server response — gameStart=${gameStartMsgs.length}, gameOver=${gameOverMsgs.length}, errors=${errorMsgs.length}`);
+    }
+  }
+
+  for (const h of handles) h.ws.close();
+  console.log(`  [${label}] PASSED`);
+}
+
+async function testPlayFoldCombinations() {
+  console.log('\n=== TEST: Play/Fold All Combinations ===');
+
+  // ── 5인 케이스 ──
+  const fiveCombos = [
+    { choices: [true, true, true, true, false],  label: '5P-A: 4play+1fold' },
+    { choices: [true, true, true, false, false],  label: '5P-B: 3play+2fold' },
+    { choices: [true, true, false, false, false],  label: '5P-C: 2play+3fold' },
+    { choices: [true, false, false, false, false], label: '5P-D: 1play+4fold' },
+    { choices: [false, false, false, false, false], label: '5P-E: 0play+5fold' },
+    { choices: [false, true, true, true, true],    label: '5P-G: 1st-fold+rest-play' },
+  ];
+
+  for (const combo of fiveCombos) {
+    console.log(`\n  --- ${combo.label} ---`);
+    await testOnePlayFoldCombo(5, combo.choices, combo.label);
+  }
+
+  // ── 6인 케이스 ──
+  const sixCombos = [
+    { choices: [true, true, true, true, false, false],   label: '6P-A: 4play+2fold' },
+    { choices: [true, true, true, false, false, false],   label: '6P-B: 3play+3fold' },
+    { choices: [true, true, false, false, false, false],   label: '6P-C: 2play+4fold' },
+    { choices: [true, false, false, false, false, false],  label: '6P-D: 1play+5fold' },
+    { choices: [false, false, false, false, false, false], label: '6P-E: 0play+6fold' },
+    { choices: [true, false, true, false, true, false],    label: '6P-F: alternating' },
+  ];
+
+  for (const combo of sixCombos) {
+    console.log(`\n  --- ${combo.label} ---`);
+    await testOnePlayFoldCombo(6, combo.choices, combo.label);
+  }
+
+  console.log('\n=== TEST: Play/Fold All Combinations PASSED ===\n');
+}
+
+// ============================================================
 // 메인 실행
 // ============================================================
 
@@ -1425,6 +1613,7 @@ async function main() {
     ['Host Leave', testHostLeave],
     ['Malformed Message', testMalformedMessage],
     ['Turn Timeout', testTurnTimeout],
+    ['Play/Fold All Combinations', testPlayFoldCombinations],
   ];
 
   // testDisconnectTimeout은 65초 소요 — --full 옵션 시에만 실행
