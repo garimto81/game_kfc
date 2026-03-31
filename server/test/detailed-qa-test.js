@@ -9,10 +9,34 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { Room } = require('../game/room');
 const { evaluateHand5, evaluateHand3, evaluateLine, isFoul } = require('../game/evaluator');
 const { calcTotalRoyalty } = require('../game/royalty');
 const { scoreHand } = require('../game/scorer');
+const { extractFeatures } = require('../game/feature-extractor');
+
+// ── Smart Bot 로드 (단순 봇 fallback) ──
+let smartBot = null;
+try {
+  smartBot = require('../game/smart-bot');
+  console.log('[INFO] smart-bot.js loaded — Foul rate ~12%');
+} catch { console.log('[WARN] smart-bot.js not found — using simple bot (Foul ~70%)'); }
+
+// ── ML Bot 로드 (있으면 사용) ──
+let mlBot = null;
+const modelPath = path.join(__dirname, '..', '..', 'data', 'models', 'v1.onnx');
+// ML bot은 async 초기화 필요하므로 나중에 로드
+
+// ── Training Logger ──
+let TrainingLogger = null;
+let logger = null;
+try {
+  const mod = require('../game/training-logger');
+  TrainingLogger = mod.TrainingLogger || mod;
+  logger = new TrainingLogger(path.join(__dirname, '..', '..', 'data', 'training'));
+  console.log('[INFO] training-logger loaded — QA 데이터 수집 활성');
+} catch { console.log('[WARN] training-logger not found — 데이터 수집 비활성'); }
 
 // ============================================================
 // 카드 포맷 유틸
@@ -151,7 +175,26 @@ function simulateHand(room, playerIds, wsMap) {
 
       const board = player.board;
       const isFL = player.inFantasyland;
-      const decision = decidePlacement(hand, board, room.round, isFL, numActive);
+      // Smart Bot 우선, fallback 단순 봇 (에러 시 단순 봇 fallback)
+      let decision;
+      try {
+        decision = smartBot
+          ? smartBot.decide(hand, board, room.round, { isFantasyland: isFL, is4Plus: numActive >= 4 })
+          : decidePlacement(hand, board, room.round, isFL, numActive);
+      } catch {
+        decision = decidePlacement(hand, board, room.round, isFL, numActive);
+      }
+
+      // 학습 데이터 수집 (매 결정마다)
+      if (logger) {
+        const features = extractFeatures(board, hand, room.round, []);
+        logger.logDecision(
+          `qa-${Date.now()}`, room.handNumber || 1, room.round, currentId,
+          { board, hand, round: room.round, is_fantasyland: isFL },
+          { placements: decision.placements, discard: decision.discard },
+          { features }
+        );
+      }
 
       for (const placement of decision.placements) {
         const result = room.placeCard(currentId, placement.card, placement.line);
@@ -496,7 +539,8 @@ async function main() {
   if (!fs.existsSync(outDir)) {
     fs.mkdirSync(outDir, { recursive: true });
   }
-  const outPath = path.join(outDir, 'qa-hands-detail-2026-03-31.md');
+  const today = new Date().toISOString().slice(0, 10);
+  const outPath = path.join(outDir, `qa-hands-detail-${today}.md`);
   const mdContent = mdLines.join('\n');
   const lineCount = mdContent.split('\n').length;
   fs.writeFileSync(outPath, mdContent, 'utf8');
@@ -511,6 +555,56 @@ async function main() {
   console.log(`Output:           ${outPath}`);
   console.log(`Output lines:     ${lineCount}`);
   console.log('========================================');
+
+  // ── QA 데이터로 ML 모델 Fine-tune ──
+  if (logger) {
+    logger.flush();
+    console.log('\n[ML] 학습 데이터 저장 완료');
+
+    // Python 학습 자동 트리거
+    const mlDir = path.resolve(__dirname, '../../ml');
+    const trainScript = path.join(mlDir, 'train.py');
+    const dataDir = path.resolve(__dirname, '../../data/training');
+    const modelsDir = path.resolve(__dirname, '../../data/models');
+
+    if (fs.existsSync(trainScript)) {
+      console.log('[ML] Fine-tune 시작...');
+      try {
+        // 최신 JSONL 파일 찾기
+        const jsonlFiles = fs.readdirSync(dataDir).filter(f => f.endsWith('.jsonl'));
+        if (jsonlFiles.length > 0) {
+          const latestData = path.join(dataDir, jsonlFiles[jsonlFiles.length - 1]);
+          const pretrained = path.join(mlDir, 'model.pt');
+          const pretrainedFlag = fs.existsSync(pretrained) ? `--pretrained "${pretrained}"` : '';
+
+          const cmd = `python "${trainScript}" --data "${latestData}" ${pretrainedFlag} --epochs 20 --output "${path.join(mlDir, 'model.pt')}"`;
+          console.log(`[ML] ${cmd}`);
+
+          const trainOutput = execSync(cmd, { encoding: 'utf8', timeout: 300000, cwd: mlDir });
+          console.log(trainOutput.split('\n').filter(l => l.includes('Epoch') || l.includes('Best') || l.includes('saved')).join('\n'));
+
+          // ONNX 변환
+          const exportScript = path.join(mlDir, 'export_onnx.py');
+          if (fs.existsSync(exportScript)) {
+            const onnxOut = path.join(modelsDir, `v${Date.now()}.onnx`);
+            const latestOnnx = path.join(modelsDir, 'latest.onnx');
+            execSync(`python "${exportScript}" --model "${pretrained}" --output "${onnxOut}"`, { encoding: 'utf8', timeout: 60000, cwd: mlDir });
+            // latest 심볼릭 링크 (또는 복사)
+            if (fs.existsSync(latestOnnx)) fs.unlinkSync(latestOnnx);
+            fs.copyFileSync(onnxOut, latestOnnx);
+            console.log(`[ML] ONNX 모델 저장: ${onnxOut}`);
+            console.log(`[ML] latest.onnx 업데이트 완료`);
+          }
+
+          console.log('[ML] Fine-tune 완료 — 다음 QA는 개선된 모델로 실행됩니다');
+        }
+      } catch (err) {
+        console.log(`[ML] Fine-tune 실패 (다음 실행 시 재시도): ${err.message}`);
+      }
+    } else {
+      console.log('[ML] ml/train.py 미발견 — Fine-tune 건너뜀');
+    }
+  }
 
   if (totalErrors > 0 || zeroSumFails > 0) {
     process.exit(1);
