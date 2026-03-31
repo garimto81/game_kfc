@@ -14,7 +14,8 @@ const path = require('path');
 const ROOT_DIR = path.join(__dirname, '..', '..');
 const date = new Date().toISOString().slice(0, 10);
 const reportDir = path.join(ROOT_DIR, 'docs', '04-report');
-const reportPath = path.join(reportDir, `qa-report-${date}.md`);
+const timeStr = new Date().toTimeString().slice(0, 5).replace(':', '');
+const reportPath = path.join(reportDir, `qa-report-${date}-${timeStr}.md`);
 
 // ============================================================
 // 헬퍼

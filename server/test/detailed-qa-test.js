@@ -540,7 +540,8 @@ async function main() {
     fs.mkdirSync(outDir, { recursive: true });
   }
   const today = new Date().toISOString().slice(0, 10);
-  const outPath = path.join(outDir, `qa-hands-detail-${today}.md`);
+  const timeStr = new Date().toTimeString().slice(0, 5).replace(':', '');
+  const outPath = path.join(outDir, `qa-hands-detail-${today}-${timeStr}.md`);
   const mdContent = mdLines.join('\n');
   const lineCount = mdContent.split('\n').length;
   fs.writeFileSync(outPath, mdContent, 'utf8');
