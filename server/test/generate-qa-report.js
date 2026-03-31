@@ -21,6 +21,7 @@ const reportPath = path.join(reportDir, `qa-report-${date}.md`);
 // ============================================================
 
 function runTest(cmd, options = {}) {
+  const startTime = Date.now();
   try {
     const stdout = execSync(cmd, {
       cwd: options.cwd || ROOT_DIR,
@@ -29,11 +30,14 @@ function runTest(cmd, options = {}) {
       env: { ...process.env, ...options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    return { success: true, output: stdout };
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    return { success: true, output: stdout, elapsed };
   } catch (err) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     return {
       success: false,
       output: (err.stdout || '') + '\n' + (err.stderr || err.message || ''),
+      elapsed,
     };
   }
 }
@@ -236,6 +240,7 @@ async function main() {
 
   let unitSection = `## 1. 서버 단위 테스트\n\n`;
   unitSection += `- **상태**: ${unitResult.success ? '✅ PASS' : '❌ FAIL'}\n`;
+  unitSection += `- **소요 시간**: ${unitResult.elapsed}s\n`;
   unitSection += `- **결과**: ${unitPF.passes} passed / ${unitPF.fails} failed\n\n`;
   unitSection += `### 체크리스트\n\n`;
   unitSection += `- [${unitResult.success ? 'x' : ' '}] scorer.test.js\n`;
@@ -263,6 +268,7 @@ async function main() {
 
   let botSection = `## 2. 스마트 봇 테스트\n\n`;
   botSection += `- **상태**: ${botResult.success ? '✅ PASS' : '❌ FAIL'}\n`;
+  botSection += `- **소요 시간**: ${botResult.elapsed}s\n`;
   botSection += `- **결과**: ${summary.smartBot.passes} passed / ${summary.smartBot.fails} failed\n\n`;
   botSection += `### 체크리스트\n\n`;
   // 테스트 항목 추출
@@ -294,6 +300,7 @@ async function main() {
 
   let soakSection = `## 3. Soak 테스트\n\n`;
   soakSection += `- **상태**: ${soakResult.success ? '✅ PASS' : '❌ FAIL'}\n`;
+  soakSection += `- **소요 시간**: ${soakResult.elapsed}s\n`;
   soakSection += `- **실행 핸드**: ${soakData.completedHands || '?'}/${soakData.totalHands || '?'}\n`;
   soakSection += `- **에러**: ${soakData.errors || 0}\n`;
   soakSection += `- **평균 핸드 시간**: ${soakData.avgHandTime || '?'}\n`;
