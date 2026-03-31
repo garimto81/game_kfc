@@ -1,0 +1,36 @@
+{
+  "versions": [
+    {
+      "version": "v0-smart-bot",
+      "file": null,
+      "created": "2026-03-31T00:00:00Z",
+      "type": "heuristic",
+      "training": null,
+      "benchmark": {
+        "opponent": "simple-bot",
+        "hands": 500,
+        "foul_rate": 11.4,
+        "avg_royalty": 0.72,
+        "fl_entry": 1.2,
+        "avg_score": 4.77,
+        "win_rate_vs_simple": 60.6,
+        "date": "2026-03-31"
+      }
+    },
+    {
+      "version": "v1",
+      "file": "v1.onnx",
+      "created": "2026-03-31T05:00:00Z",
+      "type": "ml",
+      "training": {
+        "epochs": 50,
+        "data_size": 149990,
+        "val_loss": 103.82,
+        "direction_acc": 62.05
+      },
+      "benchmark": null
+    }
+  ],
+  "latest": "v1",
+  "baseline": "v0-smart-bot"
+}

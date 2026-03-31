@@ -1,0 +1,17 @@
+[
+  {
+    "version": "v0-smart-bot",
+    "date": "2026-03-31",
+    "opponent": "simple-bot",
+    "hands": 500,
+    "botA_foul_rate": 11.4,
+    "botA_avg_royalty": 0.72,
+    "botA_fl_entry": 1.2,
+    "botA_avg_score": 4.77,
+    "botB_foul_rate": 46.2,
+    "botB_avg_royalty": 0.07,
+    "botB_fl_entry": 0.1,
+    "botB_avg_score": -2.38,
+    "win_rate_A": 60.6
+  }
+]

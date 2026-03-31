@@ -7,7 +7,8 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "test": "node game/scorer.test.js && node game/evaluator.test.js && node game/royalty.test.js && node game/deck.test.js",
-    "qa:report": "node test/generate-qa-report.js"
+    "qa:report": "node test/generate-qa-report.js",
+    "qa:eval": "node test/model-evaluator.js"
   },
   "dependencies": {
     "express": "^4.18.2",
