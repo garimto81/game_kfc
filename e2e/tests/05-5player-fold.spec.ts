@@ -67,6 +67,7 @@ test.describe('05 — 5-Player Play/Fold (WS Hybrid)', () => {
     // playOrFoldResult 대기
     const pfResult = await players[0].ws.waitFor('playOrFoldResult', 15000);
     expect(pfResult.payload.activePlayers).toBeTruthy();
+    expect(pfResult.payload.activePlayers.length).toBe(4);
 
     await sleep(2000);
     await screenshotManager.captureAll(allPages, '05-PF-RESULT', 'Play/Fold 결과');

@@ -423,105 +423,64 @@ async function testOnePlayFoldCombo(playerCount, playChoices, label) {
       if (!responded) await sleep(200);
     }
     const playCountSoFar = playChoices.slice(0, choiceIdx).filter(Boolean).length;
-    if (playCountSoFar >= 4) break;
+    const foldCountSoFar = choiceIdx - playCountSoFar;
+    const requiredFolds = playerCount - 4;
+    if (playCountSoFar >= 4 || foldCountSoFar >= requiredFolds) break;
     await sleep(200);
   }
 
   await sleep(1500);
 
   const resultMsgs = handles[0].getMsg('playOrFoldResult');
-  const playCount = playChoices.filter(Boolean).length;
-  const effectivePlay = Math.min(playCount, 4);
 
-  if (effectivePlay >= 2) {
-    const gameStartMsgs = handles[0].getMsg('gameStart');
-    assert(gameStartMsgs.length > 0, `[${label}] gameStart expected for ${effectivePlay} players`);
+  // 모든 유효 케이스는 항상 4명 play
+  const gameStartMsgs = handles[0].getMsg('gameStart');
+  assert(gameStartMsgs.length > 0, `[${label}] gameStart expected for 4 players`);
 
-    // Active player IDs from server playOrFoldResult
-    let activePlayerIds = null;
-    if (resultMsgs.length > 0) {
-      activePlayerIds = resultMsgs[resultMsgs.length - 1].payload.activePlayers;
-    }
-    // Filter handles: use server's activePlayers list, fallback to all non-fold
-    const activeHandles = activePlayerIds
-      ? handles.filter(h => activePlayerIds.includes(h.playerId))
-      : handles.filter(h => {
-          // Check stateUpdate for folded status
-          const su = h.getMsg('stateUpdate');
-          if (su.length > 0) {
-            const lastState = su[su.length - 1].payload;
-            if (lastState && lastState.players && lastState.players[h.playerId]) {
-              return !lastState.players[h.playerId].folded;
+  // Active player IDs from server playOrFoldResult
+  let activePlayerIds = null;
+  if (resultMsgs.length > 0) {
+    activePlayerIds = resultMsgs[resultMsgs.length - 1].payload.activePlayers;
+  }
+
+  // 핵심 검증: activePlayers.length === 4 (항상!)
+  assert(activePlayerIds !== null, `[${label}] playOrFoldResult missing activePlayers`);
+  assert(activePlayerIds.length === 4,
+    `[${label}] activePlayers.length must be 4, got ${activePlayerIds.length}`);
+  console.log(`    [OK] activePlayers.length === 4`);
+
+  // Filter handles to active players only
+  const activeHandles = handles.filter(h => activePlayerIds.includes(h.playerId));
+  console.log(`    [INFO] ${label}: activeHandles=${activeHandles.length}`);
+
+  const scored = await playFullHand(activeHandles, 4);
+  assert(scored !== null, `[${label}] handScored not received`);
+
+  verifyInvariants(label, handles, scored);
+
+  // fold 플레이어에게 dealCards 미전송 확인
+  for (const h of handles) {
+    const dealMsgs = h.getMsg('dealCards');
+    const stateUpdates = h.getMsg('stateUpdate');
+    if (stateUpdates.length > 0) {
+      const lastState = stateUpdates[stateUpdates.length - 1].payload;
+      if (lastState && lastState.players) {
+        const me = lastState.players[h.playerId];
+        if (me && me.folded) {
+          if (dealMsgs.length > 0) {
+            console.log(`    [BUG] Folded ${h.playerName} (${h.playerId.substring(0,6)}) received ${dealMsgs.length} dealCards messages`);
+            for (const dm of dealMsgs) {
+              console.log(`           round=${dm.payload.round}, cards=${dm.payload.cards ? dm.payload.cards.length : 0}`);
             }
           }
-          return true; // assume active if no state info
-        });
-    console.log(`    [INFO] ${label}: activeHandles=${activeHandles.length}, effectivePlay=${effectivePlay}`);
-    const scored = await playFullHand(activeHandles, effectivePlay);
-    if (scored) {
-      verifyInvariants(label, handles, scored);
-
-      // fold 플레이어에게 dealCards 미전송 확인
-      for (const h of handles) {
-        const dealMsgs = h.getMsg('dealCards');
-        const stateUpdates = h.getMsg('stateUpdate');
-        if (stateUpdates.length > 0) {
-          const lastState = stateUpdates[stateUpdates.length - 1].payload;
-          if (lastState && lastState.players) {
-            const me = lastState.players[h.playerId];
-            if (me && me.folded) {
-              if (dealMsgs.length > 0) {
-                console.log(`    [BUG] Folded ${h.playerName} (${h.playerId.substring(0,6)}) received ${dealMsgs.length} dealCards messages`);
-                for (const dm of dealMsgs) {
-                  console.log(`           round=${dm.payload.round}, cards=${dm.payload.cards ? dm.payload.cards.length : 0}`);
-                }
-              }
-              assert(dealMsgs.length === 0, `[${label}] Folded ${h.playerName} got dealCards`);
-            }
-          }
+          assert(dealMsgs.length === 0, `[${label}] Folded ${h.playerName} got dealCards`);
         }
       }
-
-      if (resultMsgs.length > 0) {
-        const activeFromServer = resultMsgs[resultMsgs.length - 1].payload.activePlayers;
-        if (activeFromServer) {
-          assert(activeFromServer.length === effectivePlay,
-            `[${label}] activePlayers: expected ${effectivePlay}, got ${activeFromServer.length}`);
-        }
-      }
-    }
-  } else if (effectivePlay === 1) {
-    await sleep(2000);
-    const gameStartMsgs = handles[0].getMsg('gameStart');
-    const gameOverMsgs = handles[0].getMsg('gameOver');
-    const errorMsgs = handles[0].getMsg('error');
-
-    if (gameStartMsgs.length > 0) {
-      console.log(`    [INFO] ${label}: Server started game with 1 player`);
-      const activeHandles = handles.filter(h => h.getMsg('dealCards').length > 0);
-      if (activeHandles.length > 0) {
-        const scored = await playFullHand(activeHandles, 1);
-        if (scored) console.log(`    [INFO] ${label}: 1-player game scored`);
-      }
-    } else if (gameOverMsgs.length > 0) {
-      console.log(`    [INFO] ${label}: Server sent gameOver for 1 player`);
-    } else {
-      console.log(`    [INFO] ${label}: gameStart=${gameStartMsgs.length}, gameOver=${gameOverMsgs.length}, errors=${errorMsgs.length}`);
-    }
-  } else {
-    await sleep(2000);
-    const gameStartMsgs = handles[0].getMsg('gameStart');
-    const gameOverMsgs = handles[0].getMsg('gameOver');
-    const errorMsgs = handles[0].getMsg('error');
-
-    if (gameOverMsgs.length > 0) {
-      console.log(`    [INFO] ${label}: Server sent gameOver (all fold)`);
-    } else if (gameStartMsgs.length > 0) {
-      console.log(`    [WARN] ${label}: Server started game with 0 players!`);
-    } else {
-      console.log(`    [INFO] ${label}: gameStart=${gameStartMsgs.length}, gameOver=${gameOverMsgs.length}, errors=${errorMsgs.length}`);
     }
   }
+
+  // handScored 검증
+  console.log(`    [OK] handScored received — 4명 풀게임 완주`);
 
   for (const h of handles) h.ws.close();
   console.log(`  [${label}] PASSED`);
@@ -538,24 +497,20 @@ async function main() {
   const errors = [];
   const results = [];
 
-  // 5인 케이스
+  // 5인 유효 케이스 (항상 정확히 4명 play)
   const fiveCombos = [
-    { choices: [true, true, true, true, false],   label: '5P-A: 4play+1fold' },
-    { choices: [true, true, true, false, false],   label: '5P-B: 3play+2fold' },
-    { choices: [true, true, false, false, false],  label: '5P-C: 2play+3fold' },
-    { choices: [true, false, false, false, false], label: '5P-D: 1play+4fold' },
-    { choices: [false, false, false, false, false],label: '5P-E: 0play+5fold' },
-    { choices: [false, true, true, true, true],    label: '5P-G: 1st-fold+rest-play' },
+    { choices: [false, true, true, true, true],    label: '5P-A: 1st-fold→rest-auto-play' },
+    { choices: [true, true, true, true, false],    label: '5P-B: 4play→5th-auto-fold' },
+    { choices: [true, true, false, true, true],    label: '5P-C: 3rd-fold→rest-auto-play' },
+    { choices: [true, true, true, true, false],    label: '5P-D: dealer(last)-auto-fold' },
   ];
 
-  // 6인 케이스
+  // 6인 유효 케이스 (항상 정확히 4명 play)
   const sixCombos = [
-    { choices: [true, true, true, true, false, false],    label: '6P-A: 4play+2fold' },
-    { choices: [true, true, true, false, false, false],    label: '6P-B: 3play+3fold' },
-    { choices: [true, true, false, false, false, false],   label: '6P-C: 2play+4fold' },
-    { choices: [true, false, false, false, false, false],  label: '6P-D: 1play+5fold' },
-    { choices: [false, false, false, false, false, false], label: '6P-E: 0play+6fold' },
-    { choices: [true, false, true, false, true, false],    label: '6P-F: alternating' },
+    { choices: [false, false, true, true, true, true],     label: '6P-A: first-2-fold→rest-auto-play' },
+    { choices: [true, true, true, true, false, false],     label: '6P-B: 4play→5th,6th-auto-fold' },
+    { choices: [false, true, false, true, true, true],     label: '6P-C: cross-fold(1st,3rd)→rest-auto-play' },
+    { choices: [true, true, true, true, false, false],     label: '6P-D: last-2-auto-fold' },
   ];
 
   const allCombos = [...fiveCombos, ...sixCombos];

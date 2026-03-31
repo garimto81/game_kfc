@@ -313,6 +313,16 @@ class Room {
       }
     }
 
+    // fold 수가 필요한 수에 도달 → 나머지 전원 자동 play
+    const requiredFolds = this.players.size - 4; // 5인→1, 6인→2
+    if (requiredFolds > 0 && foldCount >= requiredFolds) {
+      for (const id of this.playOrFoldOrder) {
+        if (!this.playOrFoldChoices.has(id)) {
+          this.playOrFoldChoices.set(id, 'play');
+        }
+      }
+    }
+
     // 모든 선택 완료
     if (this.playOrFoldChoices.size >= this.players.size) {
       for (const [id, ch] of this.playOrFoldChoices) {

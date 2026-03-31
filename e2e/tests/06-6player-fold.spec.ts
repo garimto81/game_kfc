@@ -61,6 +61,7 @@ test.describe('06 — 6-Player Play/Fold (WS Hybrid)', () => {
     // playOrFoldResult 대기
     const pfResult = await players[0].ws.waitFor('playOrFoldResult', 15000);
     expect(pfResult.payload.activePlayers).toBeTruthy();
+    expect(pfResult.payload.activePlayers.length).toBe(4);
 
     // activePlayers 목록에서 실제 active 클라이언트 결정
     const activePlayerIds: string[] = pfResult.payload.activePlayers;
