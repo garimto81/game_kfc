@@ -588,7 +588,7 @@ async function main() {
           if (fs.existsSync(exportScript)) {
             const onnxOut = path.join(modelsDir, `v${Date.now()}.onnx`);
             const latestOnnx = path.join(modelsDir, 'latest.onnx');
-            execSync(`python "${exportScript}" --model "${pretrained}" --output "${onnxOut}"`, { encoding: 'utf8', timeout: 60000, cwd: mlDir });
+            execSync(`python "${exportScript}" --input "${pretrained}" --output "${onnxOut}"`, { encoding: 'utf8', timeout: 60000, cwd: mlDir });
             // latest 심볼릭 링크 (또는 복사)
             if (fs.existsSync(latestOnnx)) fs.unlinkSync(latestOnnx);
             fs.copyFileSync(onnxOut, latestOnnx);

@@ -13,5 +13,20 @@
     "botB_fl_entry": 0.1,
     "botB_avg_score": -2.38,
     "win_rate_A": 60.6
+  },
+  {
+    "version": "v0-smart-bot",
+    "date": "2026-03-31",
+    "opponent": "simple-bot",
+    "hands": 500,
+    "botA_foul_rate": 11,
+    "botA_avg_royalty": 0.57,
+    "botA_fl_entry": 0.8,
+    "botA_avg_score": 3.64,
+    "botB_foul_rate": 40.8,
+    "botB_avg_royalty": 0.1,
+    "botB_fl_entry": 0,
+    "botB_avg_score": -1.82,
+    "win_rate_A": 56.2
   }
 ]

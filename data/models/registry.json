@@ -9,11 +9,11 @@
       "benchmark": {
         "opponent": "simple-bot",
         "hands": 500,
-        "foul_rate": 11.4,
-        "avg_royalty": 0.72,
-        "fl_entry": 1.2,
-        "avg_score": 4.77,
-        "win_rate_vs_simple": 60.6,
+        "foul_rate": 11,
+        "avg_royalty": 0.57,
+        "fl_entry": 0.8,
+        "avg_score": 3.64,
+        "win_rate_vs_simple": 56.2,
         "date": "2026-03-31"
       }
     },
