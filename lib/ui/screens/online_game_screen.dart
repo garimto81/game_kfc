@@ -60,6 +60,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   // Turn highlight animation
   bool _turnHighlight = false;
   Timer? _turnHighlightTimer;
+  Timer? _lineCelebTimer;
   late AnimationController _turnPulseController;
 
   // HandScored dialog tracking — store dialog's own BuildContext for safe pop
@@ -116,6 +117,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
     _turnHighlightTimer?.cancel();
+    _lineCelebTimer?.cancel();
     _turnPulseController.dispose();
     AudioService.instance.stopBgm();
     super.dispose();
@@ -618,6 +620,16 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
           }
         });
       }
+      // lineCompleted: 상대 라인 완성 이펙트 — 2초 후 자동 클리어
+      if (next.lastLineCompleted != null &&
+          next.lastLineCompleted != prev?.lastLineCompleted) {
+        _lineCelebTimer?.cancel();
+        _lineCelebTimer = Timer(const Duration(seconds: 2), () {
+          if (mounted) {
+            ref.read(onlineGameNotifierProvider.notifier).clearLineCompleted();
+          }
+        });
+      }
       // Auto-close handScored dialog when phase transitions away
       if (prev?.phase == 'handScored' && next.phase != 'handScored') {
         _closeHandScoredDialog();
@@ -806,6 +818,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   child: OpponentPageView(
                     opponents: _buildAllPlayers(onlineState, notifier),
                     myIsInFL: onlineState.isInFantasyland,
+                    opponentCelebLines: onlineState.opponentCelebLines,
                   ),
                 )
               else
@@ -821,6 +834,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   child: OpponentPageView(
                     opponents: opponents,
                     myIsInFL: onlineState.isInFantasyland,
+                    opponentCelebLines: onlineState.opponentCelebLines,
                   ),
                 ),
                 Expanded(
@@ -843,6 +857,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                     foulWarning: _buildCompactFoulWarning(myBoard),
                     mySeatIndex: _getSeatIndex(onlineState.playerId),
                     showFoulAnimation: _foulTriggered,
+                    celebratingPlayerId: onlineState.lastLineCompleted?['playerId'],
+                    celebratingLine: onlineState.lastLineCompleted?['line'],
                   ),
                 ),
               ],

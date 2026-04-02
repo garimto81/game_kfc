@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../../models/player.dart';
 import '../theme/player_colors.dart';
 import 'board_widget.dart';
@@ -7,12 +8,14 @@ class OpponentPageView extends StatefulWidget {
   final List<Player> opponents;
   final bool hideCardsForFL;
   final bool myIsInFL;
+  final Map<String, int> opponentCelebLines;
 
   const OpponentPageView({
     super.key,
     required this.opponents,
     this.hideCardsForFL = true,
     this.myIsInFL = false,
+    this.opponentCelebLines = const {},
   });
 
   @override
@@ -77,17 +80,47 @@ class _OpponentPageViewState extends State<OpponentPageView> {
               final opp = widget.opponents[index];
               final shouldHide = widget.hideCardsForFL &&
                   (opp.isInFantasyland || widget.myIsInFL);
+              // Check if any line has a celebration for this opponent
+              final hasCeleb = widget.opponentCelebLines.keys
+                  .any((k) => k.startsWith('${opp.id}_'));
+              Widget boardWidget = BoardWidget(
+                board: opp.board,
+                availableLines: const [],
+                onCardPlaced: null,
+                currentTurnPlacements: const [],
+                hideCards: shouldHide,
+              );
+              if (hasCeleb) {
+                // Find max level for shimmer intensity
+                final maxLevel = widget.opponentCelebLines.entries
+                    .where((e) => e.key.startsWith('${opp.id}_'))
+                    .fold<int>(0, (max, e) => e.value > max ? e.value : max);
+                if (maxLevel >= 2) {
+                  boardWidget = Container(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.amber.withValues(alpha: maxLevel == 3 ? 0.6 : 0.3),
+                          blurRadius: maxLevel == 3 ? 12 : 8,
+                          spreadRadius: maxLevel == 3 ? 2 : 1,
+                        ),
+                      ],
+                    ),
+                    child: boardWidget,
+                  )
+                      .animate(onPlay: (c) => c.forward())
+                      .shimmer(duration: 600.ms, color: Colors.amber.withValues(alpha: 0.4));
+                } else if (maxLevel == 1) {
+                  boardWidget = boardWidget
+                      .animate(onPlay: (c) => c.forward())
+                      .shimmer(duration: 600.ms, color: Colors.amber.withValues(alpha: 0.3));
+                }
+              }
               return FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: BoardWidget(
-                    board: opp.board,
-                    availableLines: const [],
-                    onCardPlaced: null,
-                    currentTurnPlacements: const [],
-                    hideCards: shouldHide,
-                  ),
+                  child: boardWidget,
                 ),
               );
             },

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../models/card.dart' as ofc;
 import '../models/board.dart';
+import '../logic/hand_evaluator.dart' show getCelebrationLevel;
 import '../network/online_client.dart';
 
 part 'online_game_provider.g.dart';
@@ -45,6 +46,7 @@ class OnlineState {
   final int readyCount;
   final int readyTotal;
   final bool waitingForReady;
+  final String? myPlayerName;
   final String? dealerButtonId;
   final Map<String, dynamic>? dealerCards;
   final bool isPlayOrFoldPhase;
@@ -52,6 +54,8 @@ class OnlineState {
   final int playOrFoldPlayCount;
   final int playOrFoldFoldCount;
   final int playOrFoldRemaining;
+  final Map<String, String>? lastLineCompleted;
+  final Map<String, int> opponentCelebLines;
 
   const OnlineState({
     this.connectionState = OnlineConnectionState.disconnected,
@@ -80,6 +84,7 @@ class OnlineState {
     this.readyCount = 0,
     this.readyTotal = 0,
     this.waitingForReady = false,
+    this.myPlayerName,
     this.dealerButtonId,
     this.dealerCards,
     this.isPlayOrFoldPhase = false,
@@ -87,6 +92,8 @@ class OnlineState {
     this.playOrFoldPlayCount = 0,
     this.playOrFoldFoldCount = 0,
     this.playOrFoldRemaining = 0,
+    this.lastLineCompleted,
+    this.opponentCelebLines = const {},
   });
 
   OnlineState copyWith({
@@ -119,6 +126,7 @@ class OnlineState {
     int? readyTotal,
     bool? waitingForReady,
     bool clearWaitingReady = false,
+    String? myPlayerName,
     String? dealerButtonId,
     Map<String, dynamic>? dealerCards,
     bool? isPlayOrFoldPhase,
@@ -126,6 +134,9 @@ class OnlineState {
     int? playOrFoldPlayCount,
     int? playOrFoldFoldCount,
     int? playOrFoldRemaining,
+    Map<String, String>? lastLineCompleted,
+    bool clearLineCompleted = false,
+    Map<String, int>? opponentCelebLines,
   }) {
     return OnlineState(
       connectionState: connectionState ?? this.connectionState,
@@ -154,6 +165,7 @@ class OnlineState {
       readyCount: clearWaitingReady ? 0 : (readyCount ?? this.readyCount),
       readyTotal: clearWaitingReady ? 0 : (readyTotal ?? this.readyTotal),
       waitingForReady: clearWaitingReady ? false : (waitingForReady ?? this.waitingForReady),
+      myPlayerName: myPlayerName ?? this.myPlayerName,
       dealerButtonId: dealerButtonId ?? this.dealerButtonId,
       dealerCards: dealerCards ?? this.dealerCards,
       isPlayOrFoldPhase: isPlayOrFoldPhase ?? this.isPlayOrFoldPhase,
@@ -161,6 +173,8 @@ class OnlineState {
       playOrFoldPlayCount: playOrFoldPlayCount ?? this.playOrFoldPlayCount,
       playOrFoldFoldCount: playOrFoldFoldCount ?? this.playOrFoldFoldCount,
       playOrFoldRemaining: playOrFoldRemaining ?? this.playOrFoldRemaining,
+      lastLineCompleted: clearLineCompleted ? null : (lastLineCompleted ?? this.lastLineCompleted),
+      opponentCelebLines: opponentCelebLines ?? this.opponentCelebLines,
     );
   }
 }
@@ -277,6 +291,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
       state = state.copyWith(
         connectionState: OnlineConnectionState.inRoom,
         roomId: roomId,
+        myPlayerName: playerName,
       );
     } catch (e) {
       state = state.copyWith(
@@ -595,6 +610,43 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           isFolded: myChoice == 'fold',
         );
         break;
+      case 'lineCompleted':
+        final lcPlayerId = payload['playerId'] as String?;
+        final lcLine = payload['line'] as String?;
+        if (lcPlayerId != null && lcLine != null) {
+          state = state.copyWith(
+            lastLineCompleted: {'playerId': lcPlayerId, 'line': lcLine},
+          );
+          // 상대 보드 celebration 이펙트
+          if (lcPlayerId != state.playerId) {
+            final players = state.gameState?['players'] as Map<String, dynamic>?;
+            final playerData = players?[lcPlayerId] as Map<String, dynamic>?;
+            final boardData = playerData?['board'] as Map<String, dynamic>?;
+            if (boardData != null) {
+              final board = parseBoard(boardData);
+              if (board != null) {
+                final cards = lcLine == 'top'
+                    ? board.top
+                    : lcLine == 'mid'
+                        ? board.mid
+                        : board.bottom;
+                final level = getCelebrationLevel(cards, lcLine);
+                if (level > 0) {
+                  final newMap = Map<String, int>.from(state.opponentCelebLines);
+                  newMap['${lcPlayerId}_$lcLine'] = level;
+                  state = state.copyWith(opponentCelebLines: newMap);
+                  // 2초 후 제거
+                  Future.delayed(const Duration(seconds: 2), () {
+                    final updated = Map<String, int>.from(state.opponentCelebLines);
+                    updated.remove('${lcPlayerId}_$lcLine');
+                    state = state.copyWith(opponentCelebLines: updated);
+                  });
+                }
+              }
+            }
+          }
+        }
+        break;
       case 'playerLeft':
         final reason = payload['reason'] as String?;
         state = state.copyWith(
@@ -605,6 +657,11 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
         );
         break;
     }
+  }
+
+  /// 라인 완성 이펙트 클리어
+  void clearLineCompleted() {
+    state = state.copyWith(clearLineCompleted: true);
   }
 
   /// 카드 배치 (서버 형식으로 변환하여 전송)
@@ -756,6 +813,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
   }
 
   void _onConnectionLost() {
+    print('[WS-PROVIDER] _onConnectionLost: connectionState=${state.connectionState} isReconnecting=$_isReconnecting roomId=${state.roomId}');
     if (_isReconnecting) return;
     final cs = state.connectionState;
     if (cs == OnlineConnectionState.playing ||
@@ -777,11 +835,23 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
     _messageSubscription?.cancel();
     _messageSubscription = null;
 
-    final success = await _client!.autoReconnect(state.roomId!);
+    final result = await _client!.autoReconnect(state.roomId!);
     _isReconnecting = false;
-    if (success) {
+    if (result == ReconnectResult.success) {
       _messageSubscription = _client!.messageStream.listen(_handleMessage);
       _client!.onUnexpectedDisconnect = () => _onConnectionLost();
+    } else if (result == ReconnectResult.rejoinRequired) {
+      // 세션 만료 — 자동으로 새 join 시도
+      final roomId = state.roomId;
+      final name = state.myPlayerName;
+      if (roomId != null && name != null) {
+        await joinRoom(roomId, name);
+      } else {
+        state = state.copyWith(
+          connectionState: OnlineConnectionState.error,
+          errorMessage: 'Session expired. Please rejoin the room.',
+        );
+      }
     } else {
       state = state.copyWith(
         connectionState: OnlineConnectionState.error,
@@ -801,11 +871,22 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
       connectionState: OnlineConnectionState.reconnecting,
       clearError: true,
     );
-    final success = await _client!.autoReconnect(state.roomId!);
+    final result = await _client!.autoReconnect(state.roomId!);
     _isReconnecting = false;
-    if (success) {
+    if (result == ReconnectResult.success) {
       _messageSubscription = _client!.messageStream.listen(_handleMessage);
       _client!.onUnexpectedDisconnect = () => _onConnectionLost();
+    } else if (result == ReconnectResult.rejoinRequired) {
+      final roomId = state.roomId;
+      final name = state.myPlayerName;
+      if (roomId != null && name != null) {
+        await joinRoom(roomId, name);
+      } else {
+        state = state.copyWith(
+          connectionState: OnlineConnectionState.error,
+          errorMessage: 'Session expired. Please rejoin the room.',
+        );
+      }
     } else {
       state = state.copyWith(
         connectionState: OnlineConnectionState.error,
@@ -814,10 +895,16 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
     }
   }
 
-  /// 앱 포그라운드 복귀 시 연결 상태 확인용 ping
+  /// 앱 포그라운드 복귀 시 연결 상태 확인용 ping (3초 타임아웃)
   void pingConnection() {
     try {
       _client?.sendHeartbeat();
+      // 3초 내 pong 미수신 시 연결 끊김으로 판단
+      Timer(const Duration(seconds: 3), () {
+        if (_client != null && !_client!.isConnected) {
+          _onConnectionLost();
+        }
+      });
     } catch (_) {
       _onConnectionLost();
     }

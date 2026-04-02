@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import '../../models/board.dart';
 import '../../models/player.dart';
 import '../../models/card.dart' as ofc;
@@ -8,12 +9,16 @@ class OpponentBoardWidget extends StatelessWidget {
   final Player opponent;
   final bool hideCards;
   final VoidCallback? onTap;
+  final String? celebratingLine;
+  final Map<String, int> celebLines;
 
   const OpponentBoardWidget({
     super.key,
     required this.opponent,
     this.hideCards = false,
     this.onTap,
+    this.celebratingLine,
+    this.celebLines = const {},
   });
 
   @override
@@ -46,17 +51,60 @@ class OpponentBoardWidget extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 2),
-              _buildMiniLine(opponent.board.top, OFCBoard.topMaxCards),
+              _buildMiniLineWithCeleb(opponent.board.top, OFCBoard.topMaxCards, 'top'),
               const SizedBox(height: 1),
-              _buildMiniLine(opponent.board.mid, OFCBoard.midMaxCards),
+              _buildMiniLineWithCeleb(opponent.board.mid, OFCBoard.midMaxCards, 'mid'),
               const SizedBox(height: 1),
-              _buildMiniLine(opponent.board.bottom, OFCBoard.bottomMaxCards),
+              _buildMiniLineWithCeleb(opponent.board.bottom, OFCBoard.bottomMaxCards, 'bottom'),
             ],
           ),
         ),
       ),
     ),
     );
+  }
+
+  Widget _buildMiniLineWithCeleb(List<ofc.Card> cards, int maxCards, String lineName) {
+    Widget line = _buildMiniLine(cards, maxCards);
+    final level = celebLines[lineName] ?? 0;
+
+    if (level >= 2) {
+      line = Container(
+        key: const Key('opponent-celebration'),
+        decoration: BoxDecoration(
+          boxShadow: [
+            BoxShadow(
+              color: Colors.amber.withValues(alpha: level == 3 ? 0.6 : 0.3),
+              blurRadius: level == 3 ? 12 : 8,
+              spreadRadius: level == 3 ? 2 : 1,
+            ),
+          ],
+        ),
+        child: line,
+      )
+          .animate(onPlay: (c) => c.forward())
+          .shimmer(duration: 600.ms, color: Colors.amber.withValues(alpha: 0.4));
+    } else if (level == 1) {
+      line = line
+          .animate(onPlay: (c) => c.forward())
+          .shimmer(duration: 600.ms, color: Colors.amber.withValues(alpha: 0.3));
+    } else if (celebratingLine == lineName) {
+      // Fallback: 기존 celebratingLine 호환
+      line = DecoratedBox(
+        key: const Key('opponent-celebration'),
+        decoration: BoxDecoration(
+          boxShadow: [
+            BoxShadow(
+              color: Colors.amber.withValues(alpha: 0.6),
+              blurRadius: 12,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: line,
+      );
+    }
+    return line;
   }
 
   Widget _buildMiniLine(List<ofc.Card> cards, int maxCards) {
