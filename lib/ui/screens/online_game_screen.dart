@@ -11,6 +11,7 @@ import '../../logic/foul_checker.dart';
 import '../../logic/hand_evaluator.dart';
 import '../../logic/simple_ai.dart';
 import '../../providers/online_game_provider.dart';
+import '../../logic/effect_manager.dart';
 import '../../services/audio_service.dart';
 import '../../providers/settings_provider.dart';
 import '../theme/player_colors.dart';
@@ -38,16 +39,12 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
   bool _hasDiscarded = false;
   ofc.Card? _discardedCard;
   final List<({ofc.Card card, String line, bool impact})> _localPlacements = [];
-  // 트립스+ 완성 시 관련 카드 전체 임팩트 (기존 카드 포함)
-  Set<({ofc.Card card, String line})> _lineImpactCards = {};
-  int _impactGeneration = 0; // 임팩트 리빌드 강제용
+  final EffectManager _effectManager = EffectManager();
   _OnlineSortMode _sortMode = _OnlineSortMode.none;
   _ViewMode _viewMode = _ViewMode.split;
 
   // Foul 연출 상태
   bool _foulTriggered = false;
-  // 축하 사운드 중복 방지 (라운드마다 초기화)
-  final Set<String> _celebratedLines = {};
 
   // Emote state
   bool _showEmotePicker = false;
@@ -359,18 +356,9 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
     // 로컬 state 변경은 반드시 setState로 감싸야 Flutter rebuild에 반영됨
     if (isTripsImpact) {
+      _effectManager.addEarlyWarning(onlineState.handNumber, line, lineCards);
       setState(() {
-        for (final c in lineCards) {
-          _lineImpactCards.add((card: c, line: line));
-        }
         _localPlacements.add((card: card, line: line, impact: true));
-      });
-      _impactGeneration++;
-      final gen = _impactGeneration;
-      Future.delayed(const Duration(milliseconds: 1500), () {
-        if (mounted && _impactGeneration == gen) {
-          setState(() => _lineImpactCards.clear());
-        }
       });
     } else {
       setState(() {
@@ -385,20 +373,24 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
   /// 라인 완성 시 핸드 강도에 따라 축하 사운드 재생
   void _checkCelebration() {
+    final onlineState = ref.read(onlineGameNotifierProvider);
+    final handNum = onlineState.handNumber;
     final board = _getMyBoard();
     final lines = {'top': board.top, 'mid': board.mid, 'bottom': board.bottom};
 
     for (final entry in lines.entries) {
       final maxCards = entry.key == 'top' ? 3 : 5;
-      if (entry.value.length == maxCards && !_celebratedLines.contains(entry.key)) {
+      if (entry.value.length == maxCards && _effectManager.getCelebration(handNum, entry.key) == 0) {
         final level = getCelebrationLevel(entry.value, entry.key);
-        if (level >= 3) {
-          _celebratedLines.add(entry.key);
-          AudioService.instance.playScoop();
-          return;
-        } else if (level >= 2) {
-          _celebratedLines.add(entry.key);
-          AudioService.instance.playWin();
+        if (level >= 2) {
+          _effectManager.setCelebration(handNum, entry.key, level);
+          if (_effectManager.markSoundPlayed(handNum, entry.key)) {
+            if (level >= 3) {
+              AudioService.instance.playScoop();
+            } else {
+              AudioService.instance.playWin();
+            }
+          }
           return;
         }
       }
@@ -477,11 +469,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) {
           ref.read(onlineGameNotifierProvider.notifier).confirmPlacement();
+          _effectManager.clearAll();
           setState(() {
             _hasDiscarded = false;
             _discardedCard = null;
             _localPlacements.clear();
-            _celebratedLines.clear();
           });
         }
       });
@@ -489,11 +481,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     }
 
     notifier.confirmPlacement();
+    _effectManager.clearAll();
     setState(() {
       _hasDiscarded = false;
       _discardedCard = null;
       _localPlacements.clear();
-      _celebratedLines.clear();
     });
   }
 
@@ -586,6 +578,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (prev?.connectionState == OnlineConnectionState.reconnecting &&
           next.connectionState == OnlineConnectionState.playing) {
         _lastDeadline = null;
+        _effectManager.clearAll();
       }
       if (next.connectionState == OnlineConnectionState.gameOver &&
           prev?.connectionState != OnlineConnectionState.gameOver) {
@@ -631,6 +624,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       }
       if (prev?.currentRound != next.currentRound ||
           prev?.handNumber != next.handNumber) {
+        _effectManager.clearAll();
         setState(() {
           _hasDiscarded = false;
           _discardedCard = null;
@@ -843,7 +837,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                     onCardPlaced: _onCardPlaced,
                     onUndoCard: _onTapPlacedCard,
                     currentTurnPlacements: _localPlacements,
-                    lineImpactCards: _lineImpactCards,
+                    effectManager: _effectManager,
+                    handNumber: onlineState.handNumber,
                     myIsInFL: onlineState.isInFantasyland,
                     foulWarning: _buildCompactFoulWarning(myBoard),
                     mySeatIndex: _getSeatIndex(onlineState.playerId),
@@ -1032,7 +1027,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                 TextButton(
                   child: const Text('Back to Home'),
                   onPressed: () {
-                    ref.read(onlineGameNotifierProvider.notifier).disconnect();
+                    ref.read(onlineGameNotifierProvider.notifier).leaveGame();
                     Navigator.of(context).popUntil((route) => route.isFirst);
                   },
                 ),
@@ -1158,6 +1153,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (_hasDiscarded && _discardedCard != null) {
       notifier.undiscardCard(_discardedCard!);
     }
+    _effectManager.clearAll();
     setState(() {
       _localPlacements.clear();
       _hasDiscarded = false;
@@ -1215,14 +1211,18 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
           final color = PlayerColors.forSeat(seatIdx >= 0 ? seatIdx : 0);
           return Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Chip(
-              backgroundColor: isMe ? color.primary : color.background,
-              label: Text(
-                '$name: $score',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
-                  fontSize: 12,
+            child: Semantics(
+              label: 'score-chip-${entry.key}',
+              value: '$score',
+              child: Chip(
+                backgroundColor: isMe ? color.primary : color.background,
+                label: Text(
+                  '$name: $score',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 12,
+                  ),
                 ),
               ),
             ),
@@ -1269,7 +1269,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   availableLines: availableLines,
                   onCardPlaced: _onCardPlaced,
                   currentTurnPlacements: _localPlacements,
-                  lineImpactCards: _lineImpactCards,
+                  effectManager: _effectManager,
+                  handNumber: ref.read(onlineGameNotifierProvider).handNumber,
                   onUndoCard: _onTapPlacedCard,
                   showFoulAnimation: _foulTriggered,
                 ),
@@ -1324,14 +1325,19 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   final data = e.value as Map<String, dynamic>;
                   final name = data['name'] as String? ?? e.key;
                   final score = data['totalScore'] as int? ?? 0;
-                  final foul = data['foul'] as bool? ?? false;
+                  final foul = data['foul'] as bool? ?? data['fouled'] as bool? ?? false;
+                  final folded = data['folded'] as bool? ?? false;
                   final lineResults = data['lineResults'] as Map<String, dynamic>? ?? {};
+                  final statusLabel = foul ? ' (Foul)' : (folded ? ' (Fold)' : '');
 
-                  return ExpansionTile(
+                  return Semantics(
+                    label: 'score-player-${e.key}',
+                    value: '$score',
+                    child: ExpansionTile(
                     initiallyExpanded: e.key == ref.read(onlineGameNotifierProvider).playerId,
                     tilePadding: EdgeInsets.zero,
                     title: Text(
-                      '$name: ${score >= 0 ? "+$score" : "$score"} pts${foul ? ' (Foul)' : ''}',
+                      '$name: ${score >= 0 ? "+$score" : "$score"} pts$statusLabel',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
@@ -1443,6 +1449,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                           );
                         }),
                     ],
+                  ),
                   );
                 }),
             ],
@@ -1513,7 +1520,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
         actions: [
           ElevatedButton(
             onPressed: () {
-              ref.read(onlineGameNotifierProvider.notifier).disconnect();
+              ref.read(onlineGameNotifierProvider.notifier).leaveGame();
               Navigator.of(ctx).pop();
               Navigator.of(context).popUntil((route) => route.isFirst);
             },
