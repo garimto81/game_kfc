@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../../logic/hand_evaluator.dart';
 import '../../logic/royalty_calculator.dart';
 import '../../models/board.dart';
+import '../../logic/effect_manager.dart';
 import '../../models/card.dart' as ofc;
 import '../../models/card_drag_data.dart';
 import 'line_slot_widget.dart';
@@ -15,7 +16,8 @@ class BoardWidget extends StatefulWidget {
   final void Function(ofc.Card card, String line, {String? fromLine})?
       onCardPlaced;
   final List<({ofc.Card card, String line, bool impact})> currentTurnPlacements;
-  final Set<({ofc.Card card, String line})> lineImpactCards;
+  final EffectManager? effectManager;
+  final int handNumber;
   final void Function(ofc.Card card, String line)? onUndoCard;
   final bool hideCards;
   final bool showFoulAnimation;
@@ -26,7 +28,8 @@ class BoardWidget extends StatefulWidget {
     this.availableLines = const ['top', 'mid', 'bottom'],
     this.onCardPlaced,
     this.currentTurnPlacements = const [],
-    this.lineImpactCards = const {},
+    this.effectManager,
+    this.handNumber = 0,
     this.onUndoCard,
     this.hideCards = false,
     this.showFoulAnimation = false,
@@ -255,7 +258,17 @@ class _BoardWidgetState extends State<BoardWidget> {
     final canAccept = widget.availableLines.contains(lineName);
     final isFoul = widget.showFoulAnimation;
     // 라인 완성 시 축하 레벨 계산 (foul 시 비활성)
-    final celebLevel = isFoul ? 0 : getCelebrationLevel(cards, lineName);
+    int celebLevel;
+    if (isFoul) {
+      celebLevel = 0;
+    } else if (widget.effectManager != null) {
+      celebLevel = widget.effectManager!.getCelebration(widget.handNumber, lineName);
+      if (celebLevel == 0) {
+        celebLevel = getCelebrationLevel(cards, lineName);
+      }
+    } else {
+      celebLevel = getCelebrationLevel(cards, lineName);
+    }
 
     Widget lineWidget = Row(
       key: lineKey,
@@ -283,14 +296,9 @@ class _BoardWidgetState extends State<BoardWidget> {
               widget.currentTurnPlacements
                   .any((p) => p.card == cards[i] && p.line == lineName);
           // 새로 배치된 카드의 임팩트 또는 기존 카드의 라인 임팩트
-          final isImpact = (isUndoable &&
-                  widget.currentTurnPlacements.any((p) =>
-                      p.card == cards[i] &&
-                      p.line == lineName &&
-                      p.impact)) ||
-              (i < cards.length &&
-                  widget.lineImpactCards.any(
-                      (p) => p.card == cards[i] && p.line == lineName));
+          final isImpact = i < cards.length &&
+              widget.effectManager != null &&
+              widget.effectManager!.isEarlyWarningActive(widget.handNumber, lineName, cards[i]);
 
           // Foul scatter: 카드에 랜덤 오프셋 + 회전 적용
           Widget slotWidget = LineSlotWidget(
