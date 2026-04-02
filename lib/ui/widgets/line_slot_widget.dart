@@ -13,6 +13,7 @@ class LineSlotWidget extends StatelessWidget {
   final VoidCallback? onUndoTap;
   final bool faceDown;
   final bool isImpact;
+  final int celebLevel; // 0=없음, 1/2/3=celebration level
 
   const LineSlotWidget({
     super.key,
@@ -24,13 +25,17 @@ class LineSlotWidget extends StatelessWidget {
     this.onUndoTap,
     this.faceDown = false,
     this.isImpact = false,
+    this.celebLevel = 0,
   });
 
   @override
   Widget build(BuildContext context) {
     if (card != null) {
       Widget cardWidget;
-      if (isImpact) {
+      if (celebLevel > 0) {
+        // Celebration 카드 이펙트 (C안 Premium)
+        cardWidget = _buildCelebCard(card!, faceDown, celebLevel);
+      } else if (isImpact) {
         // 트립스+ 완성: 큰 탄성 수축 + 진동 + 금색 shimmer
         cardWidget = Container(
           decoration: BoxDecoration(
@@ -142,5 +147,55 @@ class LineSlotWidget extends StatelessWidget {
         );
       },
     );
+  }
+
+  Widget _buildCelebCard(ofc.Card card, bool faceDown, int level) {
+    final double beginScale = level >= 3 ? 2.0 : level >= 2 ? 1.6 : 1.2;
+    final double glowAlpha = level >= 3 ? 0.9 : level >= 2 ? 0.7 : 0.5;
+    final double glowBlur = level >= 3 ? 20.0 : level >= 2 ? 16.0 : 10.0;
+    final double glowSpread = level >= 3 ? 6.0 : level >= 2 ? 4.0 : 2.0;
+    final int duration = level >= 3 ? 700 : level >= 2 ? 600 : 400;
+
+    Widget w = Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Color.fromRGBO(255, 215, 0, glowAlpha),
+            blurRadius: glowBlur,
+            spreadRadius: glowSpread,
+          ),
+        ],
+      ),
+      child: CardWidget(card: card, faceDown: faceDown),
+    );
+
+    var anim = w
+        .animate()
+        .scale(
+          begin: Offset(beginScale, beginScale),
+          end: const Offset(1.0, 1.0),
+          duration: Duration(milliseconds: duration),
+          curve: Curves.elasticOut,
+        );
+
+    // Level 2+: rotation 추가
+    if (level >= 2) {
+      final double rotBegin = level >= 3 ? -0.14 : -0.09;
+      anim = anim.rotate(
+        begin: rotBegin,
+        end: 0,
+        duration: Duration(milliseconds: duration),
+        curve: Curves.elasticOut,
+      );
+    }
+
+    // shimmer 추가
+    anim = anim.shimmer(
+      duration: Duration(milliseconds: duration + 200),
+      color: Colors.white.withValues(alpha: level >= 3 ? 0.6 : 0.4),
+    );
+
+    return anim;
   }
 }

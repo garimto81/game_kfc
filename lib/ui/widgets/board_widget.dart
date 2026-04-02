@@ -8,6 +8,7 @@ import '../../models/board.dart';
 import '../../logic/effect_manager.dart';
 import '../../models/card.dart' as ofc;
 import '../../models/card_drag_data.dart';
+import 'celebration_overlay.dart';
 import 'line_slot_widget.dart';
 
 class BoardWidget extends StatefulWidget {
@@ -305,7 +306,9 @@ class _BoardWidgetState extends State<BoardWidget> {
             // 임팩트 시 key 변경 → 리빌드 + 애니메이션 재생
             key: isImpact
                 ? ValueKey('impact_${lineName}_$i')
-                : null,
+                : celebLevel > 0
+                    ? ValueKey('celeb_${lineName}_$i')
+                    : null,
             card: i < cards.length ? cards[i] : null,
             lineName: lineName,
             canAccept: !isFoul && canAccept && i >= cards.length,
@@ -313,6 +316,7 @@ class _BoardWidgetState extends State<BoardWidget> {
                 ?.call(card, lineName, fromLine: sourceLine),
             isUndoable: !isFoul && isUndoable,
             isImpact: !isFoul && isImpact,
+            celebLevel: (!isFoul && !isImpact && i < cards.length) ? celebLevel : 0,
             onUndoTap: !isFoul && isUndoable
                 ? () => widget.onUndoCard?.call(cards[i], lineName)
                 : null,
@@ -360,31 +364,41 @@ class _BoardWidgetState extends State<BoardWidget> {
     // Level 2 (Burst): 강한 scale bounce + amber glow 확산
     // Level 3 (Explosion): 골든 flash + 큰 scale bounce + shimmer
     if (celebLevel >= 2) {
-      lineWidget = Container(
-        decoration: BoxDecoration(
-          boxShadow: [
-            BoxShadow(
-              color: Colors.amber.withValues(
-                  alpha: celebLevel == 3 ? 0.8 : 0.4),
-              blurRadius: celebLevel == 3 ? 20 : 12,
-              spreadRadius: celebLevel == 3 ? 4 : 2,
+      lineWidget = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.amber.withValues(
+                      alpha: celebLevel == 3 ? 0.8 : 0.4),
+                  blurRadius: celebLevel == 3 ? 24 : 14,
+                  spreadRadius: celebLevel == 3 ? 6 : 3,
+                ),
+              ],
             ),
-          ],
-        ),
-        child: lineWidget,
-      )
-          .animate(onPlay: (c) => c.forward())
-          .scale(
-            begin: Offset(celebLevel == 3 ? 1.15 : 1.1,
-                celebLevel == 3 ? 1.15 : 1.1),
-            end: const Offset(1.0, 1.0),
-            duration: 500.ms,
-            curve: Curves.elasticOut,
+            child: lineWidget,
           )
-          .shimmer(
-            duration: 800.ms,
-            color: Colors.amber.withValues(alpha: 0.5),
-          );
+              .animate(onPlay: (c) => c.forward())
+              .scale(
+                begin: Offset(celebLevel == 3 ? 1.12 : 1.08,
+                    celebLevel == 3 ? 1.12 : 1.08),
+                end: const Offset(1.0, 1.0),
+                duration: 500.ms,
+                curve: Curves.elasticOut,
+              )
+              .shimmer(
+                duration: 800.ms,
+                color: Colors.amber.withValues(alpha: 0.5),
+              ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CelebrationOverlay(level: celebLevel),
+            ),
+          ),
+        ],
+      );
     }
 
     return Semantics(
