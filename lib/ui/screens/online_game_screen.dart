@@ -363,6 +363,14 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       final level = getCelebrationLevel(simulated, line);
       if (level > 0) {
         _effectManager.setCelebration(handNum, line, level);
+        // 사운드 즉시 재생 (#14: _checkCelebration은 서버 반영 전이라 도달 불가)
+        if (_effectManager.markSoundPlayed(handNum, line)) {
+          if (level >= 3) {
+            AudioService.instance.playScoop();
+          } else {
+            AudioService.instance.playWin();
+          }
+        }
       }
       setState(() {
         _localPlacements.add((card: card, line: line, impact: false));
