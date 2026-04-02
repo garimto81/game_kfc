@@ -24,6 +24,43 @@ const rooms = new Map(); // roomId → Room
 const lobbyClients = new Set();
 
 // ============================================================
+// 방 lifecycle 중앙 관리
+// ============================================================
+
+function registerRoom(room) {
+  rooms.set(room.id, room);
+
+  room.on('empty', () => {
+    console.log(`[WS-DIAG] room empty → delete room=${room.id}`);
+    room.clearTurnTimer();
+    for (const timer of room.disconnectTimers.values()) clearTimeout(timer);
+    room.disconnectTimers.clear();
+    rooms.delete(room.id);
+    broadcastLobby('roomDeleted', { roomId: room.id });
+  });
+
+  room.on('disconnectTimeout', (playerId, result) => {
+    if (!rooms.has(room.id)) return; // empty에서 이미 삭제됨
+    room.broadcast('playerLeft', {
+      reason: '연결 시간 초과로 퇴장되었습니다.',
+      players: room.getPlayerNames()
+    });
+    if (result && result.action === 'gameOver') {
+      room.broadcast('gameOver', { results: {} });
+      room.phase = 'waiting';
+    } else if (result && result.action === 'nextTurn') {
+      const advResult = room.advanceTurn();
+      handleTurnResult(room, advResult, null);
+    }
+    if (rooms.has(room.id)) {
+      broadcastRoomUpdate(room);
+    }
+  });
+
+  broadcastLobby('roomCreated', { room: room.toRoomInfo() });
+}
+
+// ============================================================
 // REST API
 // ============================================================
 
@@ -51,10 +88,7 @@ app.post('/api/rooms', (req, res) => {
     turnTimeLimit: turn_time_limit != null ? turn_time_limit : 60
   });
 
-  rooms.set(room.id, room);
-
-  // 로비 브로드캐스트
-  broadcastLobby('roomCreated', { room: room.toRoomInfo() });
+  registerRoom(room);
 
   res.status(201).json(room.toRoomInfo());
 });
@@ -77,8 +111,7 @@ app.post('/api/quickmatch', (req, res) => {
     turnTimeLimit: 60
   });
 
-  rooms.set(room.id, room);
-  broadcastLobby('roomCreated', { room: room.toRoomInfo() });
+  registerRoom(room);
 
   res.json({ roomId: room.id });
 });
@@ -108,6 +141,20 @@ app.delete('/api/rooms/:roomId', (req, res) => {
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 65536 });
 
+// 서버 ping: 30초마다 모든 WS에 ping — 2회 연속 무응답 시 terminate
+const PING_INTERVAL = 30000;
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === undefined) return; // 핸들러 미등록 연결 스킵
+    if (ws.isAlive === false) {
+      console.log(`[WS-DIAG] ping timeout → terminate (playerId: ${ws._playerId || 'lobby'})`);
+      return ws.terminate();
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, PING_INTERVAL);
+
 server.on('upgrade', (request, socket, head) => {
   const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
 
@@ -130,6 +177,8 @@ server.on('upgrade', (request, socket, head) => {
 // ============================================================
 
 function handleLobbyConnection(ws) {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   lobbyClients.add(ws);
 
   // 초기 방 목록 전송
@@ -191,6 +240,9 @@ function handleGameConnection(ws, roomId) {
 
   let playerId = null;
 
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('message', (data) => {
     let msg;
     try {
@@ -200,26 +252,62 @@ function handleGameConnection(ws, roomId) {
       return;
     }
     try {
-      handleGameMessage(ws, room, msg, () => playerId, (id) => { playerId = id; });
+      handleGameMessage(ws, room, msg, () => playerId, (id) => { playerId = id; ws._playerId = id; });
     } catch (e) {
       console.error(`[ERROR] ${msg.type} from ${playerId}:`, e.message, e.stack);
       ws.send(JSON.stringify({ type: 'error', payload: { message: `서버 오류: ${e.message}` } }));
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code, reason) => {
+    console.log(`[WS-DIAG] ws.close: playerId=${playerId} code=${code} reason=${reason || ''}`);
     if (playerId && room) {
-      room.disconnectPlayer(playerId);
-      room.broadcast('playerDisconnected', { playerId }, playerId);
+      handleWsDisconnect(room, playerId);
     }
   });
 
-  ws.on('error', () => {
+  ws.on('error', (err) => {
+    console.log(`[WS-DIAG] ws.error: playerId=${playerId} error=${err.message}`);
     if (playerId && room) {
-      room.disconnectPlayer(playerId);
-      room.broadcast('playerDisconnected', { playerId }, playerId);
+      handleWsDisconnect(room, playerId);
     }
   });
+}
+
+/**
+ * WS 연결 끊김 처리 — disconnect + 빈 방 삭제
+ */
+function handleWsDisconnect(room, playerId) {
+  const connectedBefore = Array.from(room.players.values()).filter(p => p.connected).length;
+  console.log(`[WS-DIAG] disconnect: playerId=${playerId} phase=${room.phase} connected=${connectedBefore}→${connectedBefore - 1} players=${room.players.size}`);
+
+  room.disconnectPlayer(playerId);
+  room.broadcast('playerDisconnected', { playerId }, playerId);
+
+  // 전원 이탈 시 기존 타이머 취소 → 10초 유예 후 전원 제거
+  const connectedCount = Array.from(room.players.values()).filter(p => p.connected).length;
+  if (connectedCount === 0 && room.players.size > 0) {
+    console.log(`[WS-DIAG] all disconnected → 10s grace period room=${room.id}`);
+    // 기존 개별 타이머 취소
+    for (const timer of room.disconnectTimers.values()) clearTimeout(timer);
+    room.disconnectTimers.clear();
+    // 10초 유예 타이머 (reconnect 시 취소됨)
+    room._allDisconnectedTimer = setTimeout(() => {
+      if (!rooms.has(room.id)) return;
+      const stillConnected = Array.from(room.players.values()).filter(p => p.connected).length;
+      if (stillConnected === 0) {
+        console.log(`[WS-DIAG] grace period expired → clearing room=${room.id}`);
+        // 전원 제거 → emit('empty') → 방 삭제
+        for (const pid of [...room.playerOrder]) {
+          room.removePlayer(pid);
+        }
+      }
+    }, 10000);
+  }
+
+  if (rooms.has(room.id)) {
+    broadcastRoomUpdate(room);
+  }
 }
 
 /**
@@ -342,10 +430,18 @@ function handleReconnect(ws, room, msg, setPlayerId) {
   const result = room.reconnectPlayer(sessionToken, ws);
 
   if (!result) {
-    ws.send(JSON.stringify({ type: 'error', payload: { message: '재접속에 실패했습니다.' } }));
+    console.log(`[WS-DIAG] reconnect FAIL: token=${sessionToken?.slice(0,8)}... room=${room.id} phase=${room.phase}`);
+    ws.send(JSON.stringify({ type: 'error', payload: { message: '재접속에 실패했습니다.', rejoinRequired: true } }));
     return;
   }
 
+  if (result.rejoinRequired) {
+    console.log(`[WS-DIAG] reconnect → rejoin required: token=${sessionToken?.slice(0,8)}... playerId=${result.playerId}`);
+    ws.send(JSON.stringify({ type: 'error', payload: { message: '세션이 만료되었습니다. 다시 참가해주세요.', rejoinRequired: true } }));
+    return;
+  }
+
+  console.log(`[WS-DIAG] reconnect OK: playerId=${result.playerId} room=${room.id}`);
   setPlayerId(result.playerId);
 
   ws.send(JSON.stringify({
@@ -410,19 +506,7 @@ function startGameAfterDealer(room, foldedPlayerIds = []) {
     });
   };
 
-  room.onDisconnectTimeout = (playerId, removeResult) => {
-    room.broadcast('playerLeft', {
-      reason: '연결 시간 초과로 퇴장되었습니다.',
-      players: room.getPlayerNames()
-    });
-    if (removeResult && removeResult.action === 'gameOver') {
-      room.broadcast('gameOver', { results: {} });
-      room.phase = 'waiting';
-    } else if (removeResult && removeResult.action === 'nextTurn') {
-      const advResult = room.advanceTurn();
-      handleTurnResult(room, advResult, null);
-    }
-  };
+  // disconnectTimeout → registerRoom의 'disconnectTimeout' 리스너에서 처리
 
   room.broadcast('gameStart', {
     turnTimeLimit: handResult.turnTimeLimit,
@@ -444,6 +528,11 @@ function handlePlaceCard(room, playerId, payload) {
   if (result.error) {
     room.sendToPlayer(playerId, 'error', { message: result.error });
     return;
+  }
+
+  // 라인 완성 이벤트 (상대 화면 이펙트용)
+  if (result.lineCompleted) {
+    room.broadcast('lineCompleted', result.lineCompleted);
   }
 
   // 상태 업데이트 브로드캐스트
@@ -586,12 +675,8 @@ function handleLeaveGame(room, playerId) {
     handleTurnResult(room, advResult, null);
   }
 
-  // 방에 플레이어가 없으면 방 삭제
-  if (room.players.size === 0) {
-    room.clearTurnTimer();
-    rooms.delete(room.id);
-    broadcastLobby('roomDeleted', { roomId: room.id });
-  } else {
+  // 방 삭제는 removePlayer → 'empty' 이벤트에서 자동 처리
+  if (rooms.has(room.id)) {
     broadcastRoomUpdate(room);
   }
 }
@@ -714,20 +799,24 @@ function handleTurnResult(room, result, triggerPlayerId) {
  */
 function sendDealCards(room) {
   const currentId = room.getCurrentTurnPlayerId();
-  if (!currentId) return;
-  const player = room.players.get(currentId);
-  if (player && player.hand.length > 0) {
-    room.sendToPlayer(currentId, 'dealCards', {
-      cards: player.hand,
-      round: room.round,
-      inFantasyland: player.inFantasyland,
-      handNumber: room.handNumber,
-      turnDeadline: room.turnDeadline,
-      turnTimeLimit: room.turnTimeLimit,
-      serverTime: Date.now() / 1000
-    });
+
+  // 비FL 현재 턴 플레이어에게 딜
+  if (currentId) {
+    const player = room.players.get(currentId);
+    if (player && player.hand.length > 0) {
+      room.sendToPlayer(currentId, 'dealCards', {
+        cards: player.hand,
+        round: room.round,
+        inFantasyland: player.inFantasyland,
+        handNumber: room.handNumber,
+        turnDeadline: room.turnDeadline,
+        turnTimeLimit: room.turnTimeLimit,
+        serverTime: Date.now() / 1000
+      });
+    }
   }
-  // Fantasyland 플레이어는 즉시 딜 (독립 진행)
+
+  // FL 플레이어는 항상 딜 (currentId 유무와 무관)
   for (const [playerId, p] of room.players) {
     if (p.inFantasyland && p.hand.length > 0 && playerId !== currentId) {
       room.sendToPlayer(playerId, 'dealCards', {

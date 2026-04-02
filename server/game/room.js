@@ -3,6 +3,7 @@
  * OFC Pineapple 게임의 전체 라이프사이클 관리
  */
 
+const { EventEmitter } = require('events');
 const { v4: uuidv4 } = require('uuid');
 const { createDeck, shuffle, dealCards, cardsEqual } = require('./deck');
 const { evaluateLine, isFoul } = require('./evaluator');
@@ -11,9 +12,15 @@ const { scoreHand } = require('./scorer');
 
 /**
  * 게임 방 클래스
+ *
+ * Events:
+ *   'empty'                        — 방에 플레이어가 0명이 됨
+ *   'playerRemoved'  (playerId, result) — removePlayer 완료
+ *   'disconnectTimeout' (playerId, result) — disconnect 타이머 만료로 퇴장
  */
-class Room {
+class Room extends EventEmitter {
   constructor({ name, maxPlayers = 3, turnTimeLimit = 60 }) {
+    super();
     this.id = uuidv4();
     this.name = name;
     this.maxPlayers = Math.min(Math.max(maxPlayers, 2), 6);
@@ -131,38 +138,33 @@ class Room {
     this.playerOrder = this.playerOrder.filter(id => id !== playerId);
     this.connections.delete(playerId);
 
-    // 세션 토큰도 제거
-    for (const [token, id] of this.sessionTokens) {
-      if (id === playerId) {
-        this.sessionTokens.delete(token);
-        break;
-      }
-    }
-
     // 호스트 이관
     if (this.hostId === playerId && this.playerOrder.length > 0) {
       this.hostId = this.playerOrder[0];
     }
 
-    // 게임 진행 중이면 폴드 처리
+    let result;
     if (this.phase === 'playing') {
-      // 남은 플레이어가 1명 이하면 게임 종료
       const activePlayers = this.getActivePlayers();
       if (activePlayers.length <= 1) {
-        return { action: 'gameOver', hostChanged: this.hostId !== playerId };
-      }
-
-      // 현재 턴 플레이어가 나갔으면 다음 턴으로
-      if (this.getCurrentTurnPlayerId() === playerId) {
-        return { action: 'nextTurn', hostChanged: true };
+        result = { action: 'gameOver', hostChanged: this.hostId !== playerId };
+      } else if (this.getCurrentTurnPlayerId() === playerId) {
+        result = { action: 'nextTurn', hostChanged: true };
       }
     }
+    if (!result) {
+      result = {
+        action: 'playerLeft',
+        hostChanged: this.hostId !== playerId,
+        players: this.getPlayerNames()
+      };
+    }
 
-    return {
-      action: 'playerLeft',
-      hostChanged: this.hostId !== playerId,
-      players: this.getPlayerNames()
-    };
+    this.emit('playerRemoved', playerId, result);
+    if (this.players.size === 0) {
+      this.emit('empty');
+    }
+    return result;
   }
 
   /**
@@ -173,7 +175,7 @@ class Room {
     if (!playerId) return null;
 
     const player = this.players.get(playerId);
-    if (!player) return null;
+    if (!player) return { rejoinRequired: true, playerId };
 
     player.connected = true;
     this.connections.set(playerId, ws);
@@ -183,6 +185,11 @@ class Room {
     if (timer) {
       clearTimeout(timer);
       this.disconnectTimers.delete(playerId);
+    }
+    // 전원 이탈 유예 타이머 취소
+    if (this._allDisconnectedTimer) {
+      clearTimeout(this._allDisconnectedTimer);
+      this._allDisconnectedTimer = null;
     }
 
     return {
@@ -201,19 +208,16 @@ class Room {
     }
     this.connections.delete(playerId);
 
-    // 60초 후 자동 퇴장 타이머
-    if (this.phase === 'playing') {
-      this.disconnectTimers.set(playerId, setTimeout(() => {
-        this.disconnectTimers.delete(playerId);
-        const p = this.players.get(playerId);
-        if (p && !p.connected) {
-          const result = this.removePlayer(playerId);
-          if (this.onDisconnectTimeout) {
-            this.onDisconnectTimeout(playerId, result);
-          }
-        }
-      }, 60000));
-    }
+    // waiting: 30초 후 퇴장, playing: 120초 후 퇴장
+    const timeout = this.phase === 'playing' ? 120000 : 30000;
+    this.disconnectTimers.set(playerId, setTimeout(() => {
+      this.disconnectTimers.delete(playerId);
+      const p = this.players.get(playerId);
+      if (p && !p.connected) {
+        const result = this.removePlayer(playerId);
+        this.emit('disconnectTimeout', playerId, result);
+      }
+    }, timeout));
   }
 
   /**
@@ -506,7 +510,11 @@ class Room {
     player.board[line].push(removedCard);
     player.placed.push({ card: removedCard, line });
 
-    return { success: true };
+    // 라인 완성 여부 (이펙트 브로드캐스트용)
+    const lineCompleted = player.board[line].length === maxSize
+        ? { playerId, line }
+        : null;
+    return { success: true, lineCompleted };
   }
 
   /**
@@ -825,13 +833,15 @@ class Room {
     for (const [id, player] of this.players) {
       if (player.folded && !results[id]) {
         results[id] = {
+          name: player.name,
           score: 0,
           royalties: { top: 0, mid: 0, bottom: 0, total: 0 },
           royaltyTotal: 0,
           lineWins: { top: 0, mid: 0, bottom: 0 },
           lineResults: {},
-          fouled: true,
-          scooped: true
+          fouled: false,
+          folded: true,
+          scooped: false
         };
       }
     }
