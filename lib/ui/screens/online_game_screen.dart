@@ -559,6 +559,15 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
         OFCBoard();
   }
 
+  /// 서버 보드 + 로컬 배치를 통합한 effective 보드 반환 (배치 즉시 카드 표시)
+  OFCBoard _getEffectiveBoard() {
+    return OFCBoard(
+      top: _getEffectiveLineCards('top'),
+      mid: _getEffectiveLineCards('mid'),
+      bottom: _getEffectiveLineCards('bottom'),
+    );
+  }
+
   /// 서버 보드 + 로컬 배치를 통합한 라인 카드 반환 (stale 상태 방지)
   List<ofc.Card> _getEffectiveLineCards(String line) {
     final board = _getMyBoard();
@@ -700,7 +709,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final screenWidth = MediaQuery.of(context).size.width;
     final isCompact = screenWidth < 400;
 
-    final myBoard = _getMyBoard();
+    final myBoard = _getEffectiveBoard();
     final availableLines = _getAvailableLines(myBoard);
     // FL이면 discard 버튼 필요 없음 (confirm 시 자동 discard)
     // 4인 R4: 2장 모두 배치 (버림 없음) → isPineapple=false로 DISCARD UI 비활성화
