@@ -343,10 +343,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       notifier.unplaceCard(card, fromLine);
       _localPlacements.removeWhere((p) => p.card == card && p.line == fromLine);
     }
-    // 트립스+/QQ+ FL 완성 감지: 로컬 배치 반영한 effective 상태 사용
+    // 배타적 이펙트: 라인 완성 → celebLevel만, 미완성 → Early Warning만
     final lineCards = _getEffectiveLineCards(line);
     final maxCards = line == 'top' ? 3 : 5;
-    final isTripsImpact = isImpactPlacement(card, line, lineCards, maxCards);
+    final simulated = [...lineCards, card];
+    final handNum = onlineState.handNumber;
 
     notifier.placeCard(card, line);
 
@@ -356,16 +357,33 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     AudioService.instance.playPlace();
     if (settings.hapticEnabled) HapticFeedback.lightImpact();
 
-    // 로컬 state 변경은 반드시 setState로 감싸야 Flutter rebuild에 반영됨
-    if (isTripsImpact) {
-      _effectManager.addEarlyWarning(onlineState.handNumber, line, lineCards);
-      setState(() {
-        _localPlacements.add((card: card, line: line, impact: true));
-      });
-    } else {
+    // 배타적 이펙트 적용 (EFX-1)
+    if (simulated.length == maxCards) {
+      // 라인 완성 → Celebration만 (Early Warning 없음)
+      final level = getCelebrationLevel(simulated, line);
+      if (level > 0) {
+        _effectManager.setCelebration(handNum, line, level);
+      }
       setState(() {
         _localPlacements.add((card: card, line: line, impact: false));
       });
+    } else {
+      // 미완성 → Early Warning만 (Celebration 없음)
+      final isEarlyWarning = isImpactPlacement(card, line, lineCards, maxCards);
+      if (isEarlyWarning) {
+        _effectManager.addEarlyWarning(handNum, line, [...lineCards, card]);
+        setState(() {
+          _localPlacements.add((card: card, line: line, impact: true));
+        });
+        // 1.5초 후 earlyWarning 만료 → 리빌드
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() {});
+        });
+      } else {
+        setState(() {
+          _localPlacements.add((card: card, line: line, impact: false));
+        });
+      }
     }
 
     _checkCelebration();
@@ -384,7 +402,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       final maxCards = entry.key == 'top' ? 3 : 5;
       if (entry.value.length == maxCards && _effectManager.getCelebration(handNum, entry.key) == 0) {
         final level = getCelebrationLevel(entry.value, entry.key);
-        if (level >= 2) {
+        if (level >= 1) {
           _effectManager.setCelebration(handNum, entry.key, level);
           if (_effectManager.markSoundPlayed(handNum, entry.key)) {
             if (level >= 3) {
