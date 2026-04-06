@@ -177,8 +177,11 @@ server.on('upgrade', (request, socket, head) => {
       handleLobbyConnection(ws);
     });
   } else if (pathname.startsWith('/ws/game/')) {
+    const url = new URL(request.url, `http://${request.headers.host}`);
     const roomId = pathname.split('/ws/game/')[1];
+    const jwtToken = url.searchParams.get('token');
     wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.authUser = jwtToken ? jwtUtil.verify(jwtToken) : null;
       handleGameConnection(ws, roomId);
     });
   } else {
@@ -401,7 +404,7 @@ function handleGameMessage(ws, room, msg, getPlayerId, setPlayerId) {
 // ============================================================
 
 function handleJoinRequest(ws, room, msg, setPlayerId) {
-  const { playerName } = msg;
+  const playerName = ws.authUser?.name || msg.playerName;
   if (!playerName || typeof playerName !== 'string') {
     ws.send(JSON.stringify({ type: 'error', payload: { message: '플레이어 이름이 필요합니다.' } }));
     return;

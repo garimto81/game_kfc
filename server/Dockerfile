@@ -1,6 +1,9 @@
 # Node.js Alpine 기반 OFC Pineapple 게임 서버
 FROM node:20-alpine
 
+# better-sqlite3 네이티브 빌드 의존성
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
 # 의존성 설치
