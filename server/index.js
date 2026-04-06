@@ -11,9 +11,18 @@ const cors = require('cors');
 const { URL } = require('url');
 const { Room } = require('./game/room');
 
+const db = require('./db/database');
+const jwtUtil = require('./auth/jwt');
+const authRouter = require('./auth/auth-router');
+const rateLimit = require('express-rate-limit');
+
+db.init(process.env.DB_PATH || './data/ofc.db');
+jwtUtil.init(process.env.JWT_SECRET || 'dev-secret-change-in-production');
+
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
 app.use(express.json());
+app.use('/auth', rateLimit({ windowMs: 60000, max: 10 }), authRouter);
 
 const server = http.createServer(app);
 
@@ -35,6 +44,10 @@ function registerRoom(room) {
     room.clearTurnTimer();
     for (const timer of room.disconnectTimers.values()) clearTimeout(timer);
     room.disconnectTimers.clear();
+    if (room._allDisconnectedTimer) {
+      clearTimeout(room._allDisconnectedTimer);
+      room._allDisconnectedTimer = null;
+    }
     rooms.delete(room.id);
     broadcastLobby('roomDeleted', { roomId: room.id });
   });
@@ -239,6 +252,7 @@ function handleGameConnection(ws, roomId) {
   }
 
   let playerId = null;
+  let disconnected = false;
 
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
@@ -261,14 +275,16 @@ function handleGameConnection(ws, roomId) {
 
   ws.on('close', (code, reason) => {
     console.log(`[WS-DIAG] ws.close: playerId=${playerId} code=${code} reason=${reason || ''}`);
-    if (playerId && room) {
+    if (playerId && room && !disconnected) {
+      disconnected = true;
       handleWsDisconnect(room, playerId);
     }
   });
 
   ws.on('error', (err) => {
     console.log(`[WS-DIAG] ws.error: playerId=${playerId} error=${err.message}`);
-    if (playerId && room) {
+    if (playerId && room && !disconnected) {
+      disconnected = true;
       handleWsDisconnect(room, playerId);
     }
   });
@@ -862,7 +878,7 @@ function broadcastStateUpdate(room) {
       handNumber: state.handNumber,
       turnDeadline: state.turnDeadline,
       turnTimeLimit: state.turnTimeLimit,
-      serverTime: Date.now(),
+      serverTime: Date.now() / 1000,
       currentTurnPlayerId: state.currentTurnPlayerId
     };
   });
