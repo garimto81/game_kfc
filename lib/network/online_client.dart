@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+enum ReconnectResult { success, failed, rejoinRequired }
+
 class OnlineClient {
   final String _serverUrl;
   WebSocketChannel? _channel;
@@ -41,9 +43,12 @@ class OnlineClient {
     return list.cast<Map<String, dynamic>>();
   }
 
+  /// JWT 토큰 (인증 사용자 전용, 게스트는 null)
+  String? authToken;
+
   /// REST: 방 생성
   Future<Map<String, dynamic>> createRoom(String name,
-      {int maxPlayers = 6, int turnTimeLimit = 0}) async {
+      {int maxPlayers = 6, int turnTimeLimit = 0, String password = ''}) async {
     final uri = Uri.parse('$_serverUrl/api/rooms');
     final response = await http.post(
       uri,
@@ -52,6 +57,7 @@ class OnlineClient {
         'name': name,
         'max_players': maxPlayers,
         'turn_time_limit': turnTimeLimit,
+        'password': password,
       }),
     ).timeout(const Duration(seconds: 10));
     if (response.statusCode != 200 && response.statusCode != 201) {
@@ -84,7 +90,8 @@ class OnlineClient {
     return 'ws://$url';
   }
 
-  void _handleUnexpectedDisconnect() {
+  void _handleUnexpectedDisconnect({String source = 'unknown'}) {
+    print('[WS-CLIENT] unexpectedDisconnect source=$source intentional=$_intentionalDisconnect playerId=$playerId');
     _heartbeatTimer?.cancel();
     _channel = null; // Don't call sink.close() — connection already dead
     if (!_intentionalDisconnect) {
@@ -104,8 +111,9 @@ class OnlineClient {
     _intentionalDisconnect = false;
     currentRoomId = roomId;
     final wsUrl = _toWsUrl(_serverUrl);
+    final tokenQuery = authToken != null ? '?token=$authToken' : '';
     _channel =
-        WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId'));
+        WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId$tokenQuery'));
 
     _channel!.stream.listen(
       (data) {
@@ -120,10 +128,17 @@ class OnlineClient {
           sessionToken = json['payload']['sessionToken'] as String?;
         }
       },
-      onDone: () => _handleUnexpectedDisconnect(),
-      onError: (e) => _handleUnexpectedDisconnect(),
+      onDone: () {
+        print('[WS-CLIENT] stream.onDone fired (game WS closed by remote or network)');
+        _handleUnexpectedDisconnect(source: 'onDone');
+      },
+      onError: (e) {
+        print('[WS-CLIENT] stream.onError: $e');
+        _handleUnexpectedDisconnect(source: 'onError:$e');
+      },
     );
 
+    print('[WS-CLIENT] connectAndJoin: roomId=$roomId playerName=$playerName');
     // Join request
     _send({'type': 'joinRequest', 'payload': {'playerName': playerName}});
 
@@ -205,8 +220,8 @@ class OnlineClient {
   }
 
   /// Reconnect to an existing game session using sessionToken
-  Future<bool> reconnect(String roomId) async {
-    if (sessionToken == null) return false;
+  Future<ReconnectResult> reconnect(String roomId) async {
+    if (sessionToken == null) return ReconnectResult.failed;
     try {
       _intentionalDisconnect = true;
       _heartbeatTimer?.cancel();
@@ -219,7 +234,7 @@ class OnlineClient {
       _channel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId'));
       currentRoomId = roomId;
 
-      final completer = Completer<bool>();
+      final completer = Completer<ReconnectResult>();
       _channel!.stream.listen(
         (data) {
           final json = jsonDecode(data as String) as Map<String, dynamic>;
@@ -230,18 +245,23 @@ class OnlineClient {
           _messageController.add(json);
           if (!completer.isCompleted) {
             if (json['type'] == 'reconnected') {
-              completer.complete(true);
+              completer.complete(ReconnectResult.success);
             } else if (json['type'] == 'error') {
-              completer.complete(false);
+              final payload = json['payload'] as Map<String, dynamic>? ?? {};
+              if (payload['rejoinRequired'] == true) {
+                completer.complete(ReconnectResult.rejoinRequired);
+              } else {
+                completer.complete(ReconnectResult.failed);
+              }
             }
           }
         },
         onDone: () {
-          if (!completer.isCompleted) completer.complete(false);
+          if (!completer.isCompleted) completer.complete(ReconnectResult.failed);
           _handleUnexpectedDisconnect();
         },
         onError: (e) {
-          if (!completer.isCompleted) completer.complete(false);
+          if (!completer.isCompleted) completer.complete(ReconnectResult.failed);
           _handleUnexpectedDisconnect();
         },
       );
@@ -259,25 +279,28 @@ class OnlineClient {
 
       return await completer.future.timeout(
         const Duration(seconds: 10),
-        onTimeout: () => false,
+        onTimeout: () => ReconnectResult.failed,
       );
     } catch (e) {
-      return false;
+      return ReconnectResult.failed;
     }
   }
 
   /// Auto-reconnect with exponential backoff
-  Future<bool> autoReconnect(String roomId, {int maxRetries = 5}) async {
+  /// Returns ReconnectResult — rejoinRequired means caller should try fresh join
+  Future<ReconnectResult> autoReconnect(String roomId, {int maxRetries = 3}) async {
     final random = Random();
     for (int i = 0; i < maxRetries; i++) {
       if (i > 0) {
-        final baseDelay = Duration(seconds: 1 << i); // 2, 4, 8, 16
+        final baseDelay = Duration(seconds: 1 << i);
         final jitter = Duration(milliseconds: random.nextInt(500));
         await Future.delayed(baseDelay + jitter);
       }
-      if (await reconnect(roomId)) return true;
+      final result = await reconnect(roomId);
+      if (result == ReconnectResult.success) return result;
+      if (result == ReconnectResult.rejoinRequired) return result;
     }
-    return false;
+    return ReconnectResult.failed;
   }
 
   /// Lobby WebSocket: 연결
@@ -311,6 +334,7 @@ class OnlineClient {
   }
 
   void disconnect() {
+    print('[WS-CLIENT] disconnect() called intentionally, playerId=$playerId');
     _intentionalDisconnect = true;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;

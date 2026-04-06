@@ -248,7 +248,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
 
   /// 방 생성
   Future<String?> createRoom(String name,
-      {int maxPlayers = 6, int turnTimeLimit = 0}) async {
+      {int maxPlayers = 6, int turnTimeLimit = 0, String password = ''}) async {
     if (_client == null) {
       state = state.copyWith(
         connectionState: OnlineConnectionState.error,
@@ -258,7 +258,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
     }
     try {
       final room = await _client!.createRoom(name,
-          maxPlayers: maxPlayers, turnTimeLimit: turnTimeLimit);
+          maxPlayers: maxPlayers, turnTimeLimit: turnTimeLimit, password: password);
       final roomId = room['id'] as String?;
       if (roomId == null) {
         state = state.copyWith(
@@ -436,6 +436,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           }
           myFL = myData?['inFantasyland'] as bool?;
         }
+        final stateRound = payload['round'] as int?;
         final stateHandNum = payload['handNumber'] as int?;
         final deadline = payload['turnDeadline'] as num?;
         final ttl = payload['turnTimeLimit'] as int?;
@@ -454,6 +455,7 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           hand: (serverHand != null && serverHand.isNotEmpty) ? serverHand : state.hand,
           isInFantasyland: myFL ?? state.isInFantasyland,
           handNumber: stateHandNum ?? state.handNumber,
+          currentRound: stateRound ?? state.currentRound,
           turnDeadline: deadline?.toDouble(),
           turnTimeLimit: ttl ?? state.turnTimeLimit,
           serverTimeOffset: newOffset,
@@ -586,10 +588,9 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
         );
         break;
       case 'playOrFoldRequest':
-        final pofTargetId = payload['playerId'] as String?;
         state = state.copyWith(
           isPlayOrFoldPhase: true,
-          isMyPlayOrFoldTurn: pofTargetId == null || pofTargetId == state.playerId,
+          isMyPlayOrFoldTurn: true,
         );
         break;
       case 'playOrFoldUpdate':
@@ -636,9 +637,11 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
                   newMap['${lcPlayerId}_$lcLine'] = level;
                   state = state.copyWith(opponentCelebLines: newMap);
                   // 2초 후 제거
+                  final celebKey = '${lcPlayerId}_$lcLine';
                   Future.delayed(const Duration(seconds: 2), () {
+                    if (!state.opponentCelebLines.containsKey(celebKey)) return;
                     final updated = Map<String, int>.from(state.opponentCelebLines);
-                    updated.remove('${lcPlayerId}_$lcLine');
+                    updated.remove(celebKey);
                     state = state.copyWith(opponentCelebLines: updated);
                   });
                 }

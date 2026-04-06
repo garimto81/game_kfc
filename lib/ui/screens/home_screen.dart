@@ -31,7 +31,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed && !_navigatedToGame) {
-      // 포그라운드 복귀 시 로비 재연결
+      // 방 참가 중이거나 재연결 중이면 로비 재연결 스킵
+      final cs = ref.read(onlineGameNotifierProvider).connectionState;
+      if (cs == OnlineConnectionState.inRoom ||
+          cs == OnlineConnectionState.connecting ||
+          cs == OnlineConnectionState.reconnecting ||
+          cs == OnlineConnectionState.playing) {
+        return;
+      }
       _lobbyConnected = false;
       _autoConnect();
     }
@@ -239,6 +246,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final playerCount = room['playerCount'] as int? ?? 0;
     final maxPlayers = room['maxPlayers'] as int? ?? 6;
     final turnTimeLimit = room['turnTimeLimit'] as int? ?? 0;
+    final hasPassword = room['hasPassword'] as bool? ?? false;
     final status = room['status'] as String? ?? 'waiting';
     final isWaiting = status == 'waiting';
 
@@ -253,6 +261,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       child: ListTile(
+        leading: hasPassword ? const Icon(Icons.lock, color: Colors.amber, size: 20) : null,
         title: Text(
           name,
           style: const TextStyle(
@@ -463,6 +472,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final playerNameController = TextEditingController(
       text: ref.read(settingsNotifierProvider).playerName,
     );
+    final passwordController = TextEditingController();
     int selectedMaxPlayers = 6;
     int selectedTimeLimit = 0;
 
@@ -560,6 +570,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'Password (optional)',
+                  labelStyle: TextStyle(color: Colors.teal[200]),
+                  border: const OutlineInputBorder(),
+                  enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.teal[400]!)),
+                ),
+                maxLength: 20,
+              ),
             ],
           ),
           actions: [
@@ -578,6 +601,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   name,
                   maxPlayers: selectedMaxPlayers,
                   turnTimeLimit: selectedTimeLimit,
+                  password: passwordController.text.trim(),
                 );
                 if (!ctx.mounted) return;
                 Navigator.of(ctx).pop();
