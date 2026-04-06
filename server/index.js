@@ -89,7 +89,7 @@ app.get('/api/rooms', (req, res) => {
  * POST /api/rooms - 방 생성
  */
 app.post('/api/rooms', (req, res) => {
-  const { name, max_players, turn_time_limit } = req.body;
+  const { name, max_players, turn_time_limit, password } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: '방 이름이 필요합니다.' });
@@ -98,7 +98,8 @@ app.post('/api/rooms', (req, res) => {
   const room = new Room({
     name,
     maxPlayers: max_players || 3,
-    turnTimeLimit: turn_time_limit != null ? turn_time_limit : 60
+    turnTimeLimit: turn_time_limit != null ? turn_time_limit : 60,
+    password: password || '',
   });
 
   registerRoom(room);
@@ -112,7 +113,7 @@ app.post('/api/rooms', (req, res) => {
 app.post('/api/quickmatch', (req, res) => {
   // 빈자리가 있는 방 찾기
   for (const [roomId, room] of rooms) {
-    if (room.phase === 'waiting' && room.players.size < room.maxPlayers) {
+    if (room.phase === 'waiting' && room.players.size < room.maxPlayers && room.password === '') {
       return res.json({ roomId });
     }
   }

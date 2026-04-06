@@ -19,12 +19,13 @@ const { scoreHand } = require('./scorer');
  *   'disconnectTimeout' (playerId, result) — disconnect 타이머 만료로 퇴장
  */
 class Room extends EventEmitter {
-  constructor({ name, maxPlayers = 3, turnTimeLimit = 60 }) {
+  constructor({ name, maxPlayers = 3, turnTimeLimit = 60, password = '' }) {
     super();
     this.id = uuidv4();
     this.name = name;
     this.maxPlayers = Math.min(Math.max(maxPlayers, 2), 6);
     this.turnTimeLimit = turnTimeLimit; // 초 단위, 0이면 타임아웃 없음
+    this.password = password || '';
 
     // 플레이어 관리
     this.players = new Map(); // playerId → PlayerState
@@ -69,8 +70,14 @@ class Room extends EventEmitter {
       turn_time_limit: this.turnTimeLimit,
       playerCount: this.players.size,
       players: this.getPlayerNames(),
-      phase: this.phase
+      phase: this.phase,
+      hasPassword: this.password !== '',
     };
+  }
+
+  checkPassword(input) {
+    if (this.password === '') return true;
+    return input === this.password;
   }
 
   getPlayerNames() {
@@ -134,6 +141,8 @@ class Room extends EventEmitter {
     const player = this.players.get(playerId);
     if (!player) return null;
 
+    const wasHost = this.hostId === playerId;
+
     this.players.delete(playerId);
     this.playerOrder = this.playerOrder.filter(id => id !== playerId);
     this.connections.delete(playerId);
@@ -147,7 +156,7 @@ class Room extends EventEmitter {
     if (this.phase === 'playing') {
       const activePlayers = this.getActivePlayers();
       if (activePlayers.length <= 1) {
-        result = { action: 'gameOver', hostChanged: this.hostId !== playerId };
+        result = { action: 'gameOver', hostChanged: wasHost };
       } else if (this.getCurrentTurnPlayerId() === playerId) {
         result = { action: 'nextTurn', hostChanged: true };
       }
@@ -155,7 +164,7 @@ class Room extends EventEmitter {
     if (!result) {
       result = {
         action: 'playerLeft',
-        hostChanged: this.hostId !== playerId,
+        hostChanged: wasHost,
         players: this.getPlayerNames()
       };
     }
@@ -484,6 +493,10 @@ class Room extends EventEmitter {
     const player = this.players.get(playerId);
     if (!player) return { error: '플레이어를 찾을 수 없습니다.' };
 
+    if (this.phase !== 'playing') {
+      return { error: '현재 카드를 배치할 수 없는 상태입니다.' };
+    }
+
     // Fantasyland이 아닌 경우 턴 체크
     if (!player.inFantasyland && this.getCurrentTurnPlayerId() !== playerId) {
       return { error: '현재 턴이 아닙니다.' };
@@ -570,7 +583,7 @@ class Room extends EventEmitter {
     }
 
     // 버리기 한도 체크
-    const maxDiscard = player.inFantasyland ? 1 : 1;
+    const maxDiscard = 1;
     if (player.discarded.length >= maxDiscard) {
       return { error: '더 이상 버릴 수 없습니다.' };
     }
@@ -717,6 +730,10 @@ class Room extends EventEmitter {
       safety++;
     }
 
+    if (safety >= nonFL.length) {
+      return { action: 'turnChanged', currentTurnPlayerId: this.getCurrentTurnPlayerId() };
+    }
+
     this.startTurnTimer();
 
     return {
@@ -764,6 +781,7 @@ class Room extends EventEmitter {
     this.turnDeadline = Date.now() / 1000 + this.turnTimeLimit;
 
     this.turnTimer = setTimeout(() => {
+      if (this.phase !== 'playing') return;
       // Guard: 타이머 시작 시점과 현재 턴 플레이어가 다르면 무시
       if (currentPlayerId !== this.getCurrentTurnPlayerId()) return;
       const result = this.autoFold(currentPlayerId);
@@ -875,7 +893,7 @@ class Room extends EventEmitter {
   playerReady(playerId) {
     this.readyPlayers.add(playerId);
 
-    const total = this.players.size;
+    const total = Array.from(this.players.values()).filter(p => p.connected).length;
     const ready = this.readyPlayers.size;
 
     if (ready >= total) {
