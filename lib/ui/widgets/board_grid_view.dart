@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../logic/effect_manager.dart';
 import '../../models/board.dart';
 import '../../models/card.dart' as ofc;
 import '../../models/player.dart';
@@ -23,12 +24,15 @@ class BoardGridView extends StatelessWidget {
   final void Function(ofc.Card card, String line, {String? fromLine})? onCardPlaced;
   final void Function(ofc.Card card, String line)? onUndoCard;
   final List<({ofc.Card card, String line, bool impact})> currentTurnPlacements;
-  final Set<({ofc.Card card, String line})> lineImpactCards;
+  final EffectManager? effectManager;
+  final int handNumber;
   final bool hideCardsForFL;
   final bool myIsInFL;
   final Widget? foulWarning;
   final int mySeatIndex;
   final bool showFoulAnimation;
+  final String? celebratingPlayerId;
+  final String? celebratingLine;
 
   const BoardGridView({
     super.key,
@@ -39,12 +43,15 @@ class BoardGridView extends StatelessWidget {
     this.onCardPlaced,
     this.onUndoCard,
     this.currentTurnPlacements = const [],
-    this.lineImpactCards = const {},
+    this.effectManager,
+    this.handNumber = 0,
     this.hideCardsForFL = true,
     this.myIsInFL = false,
     this.foulWarning,
     this.mySeatIndex = 0,
     this.showFoulAnimation = false,
+    this.celebratingPlayerId,
+    this.celebratingLine,
   });
 
   @override
@@ -157,7 +164,8 @@ class BoardGridView extends StatelessWidget {
                   availableLines: availableLines,
                   onCardPlaced: onCardPlaced,
                   currentTurnPlacements: currentTurnPlacements,
-                  lineImpactCards: lineImpactCards,
+                  effectManager: effectManager,
+                  handNumber: handNumber,
                   onUndoCard: onUndoCard,
                   showFoulAnimation: showFoulAnimation,
                 ),
@@ -172,11 +180,21 @@ class BoardGridView extends StatelessWidget {
   Widget _buildOpponentCell(Player opponent) {
     final shouldHide = hideCardsForFL && (opponent.isInFantasyland || myIsInFL);
     final color = PlayerColors.forSeat(opponent.seatIndex);
+    final isCelebrating = celebratingPlayerId == opponent.id && celebratingLine != null;
     return Container(
       decoration: BoxDecoration(
         color: color.background.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.border.withValues(alpha: 0.6), width: 1),
+        boxShadow: isCelebrating
+            ? [
+                BoxShadow(
+                  color: Colors.amber.withValues(alpha: 0.6),
+                  blurRadius: 16,
+                  spreadRadius: 3,
+                ),
+              ]
+            : null,
       ),
       child: Column(
         children: [

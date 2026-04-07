@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>OFC Effect PRD Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* Header */
+  .header { padding: 16px 24px; border-bottom: 1px solid #333; }
+  .header h1 { font-size: 20px; color: #ffd700; margin-bottom: 8px; }
+
+  /* Discrepancy Banner */
+  .banner { background: #2d1b1b; border: 1px solid #c0392b; border-radius: 8px; padding: 12px 16px; margin: 8px 0; }
+  .banner-title { font-size: 13px; font-weight: bold; color: #e74c3c; margin-bottom: 8px; }
+  .banner-items { display: flex; flex-wrap: wrap; gap: 6px; }
+  .banner-item { font-size: 11px; color: #f5b7b1; background: #3d1f1f; padding: 4px 8px; border-radius: 4px; border-left: 3px solid #e74c3c; }
+
+  /* Layout */
+  .layout { display: flex; flex: 1; }
+  .sidebar { width: 280px; min-width: 280px; border-right: 1px solid #333; padding: 16px; overflow-y: auto; max-height: calc(100vh - 120px); }
+  .main { flex: 1; padding: 20px; overflow-y: auto; max-height: calc(100vh - 120px); }
+
+  /* Sidebar - PRD Spec Panel */
+  .sidebar-title { font-size: 14px; font-weight: bold; color: #ffd700; margin-bottom: 12px; }
+  .spec-section { margin-bottom: 16px; }
+  .spec-section-title { font-size: 12px; font-weight: bold; color: #aaa; margin-bottom: 6px; }
+  .spec-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  .spec-table th { text-align: left; padding: 3px 4px; color: #888; border-bottom: 1px solid #333; font-weight: normal; }
+  .spec-table td { padding: 3px 4px; border-bottom: 1px solid #222; color: #ccc; }
+  .spec-table tr.diff td { color: #e74c3c; background: #2d1b1b; }
+
+  /* Sections */
+  .section { margin-bottom: 32px; background: #16213e; border-radius: 12px; padding: 16px; position: relative; }
+  .section-title { font-size: 15px; font-weight: bold; color: #ffd700; margin-bottom: 4px; }
+  .section-desc { font-size: 12px; color: #aaa; margin-bottom: 12px; }
+
+  /* Board */
+  .board { display: flex; flex-direction: column; gap: 8px; align-items: center; position: relative; }
+  .line { display: flex; gap: 4px; align-items: center; position: relative; }
+  .line-label { width: 48px; font-size: 11px; color: #888; text-align: right; padding-right: 8px; }
+
+  /* Card */
+  .card {
+    width: 48px; height: 64px; border-radius: 6px; background: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-weight: bold; font-size: 14px; position: relative;
+  }
+  .card.empty { background: #2a2a4a; border: 1px dashed #444; }
+  .card .rank { font-size: 16px; line-height: 1; }
+  .card .suit { font-size: 14px; line-height: 1; margin-top: 2px; }
+  .suit-red { color: #e74c3c; }
+  .suit-black { color: #333; }
+
+  /* Controls */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; justify-content: center; }
+  .btn {
+    padding: 6px 14px; border: 1px solid #ffd700; background: transparent;
+    color: #ffd700; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s;
+  }
+  .btn:hover { background: #ffd700; color: #1a1a2e; }
+
+  /* Hand area */
+  .hand-area { display: flex; gap: 6px; justify-content: center; margin: 8px 0; padding: 8px; background: #0f3460; border-radius: 8px; }
+
+  /* Sound icon */
+  .sound-icon { font-size: 11px; color: #888; margin-top: 6px; text-align: center; display: none; }
+  .sound-icon.visible { display: block; }
+
+  /* Timeline */
+  .timeline { display: flex; gap: 4px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .step { padding: 4px 8px; border-radius: 4px; font-size: 11px; background: #2a2a4a; color: #888; transition: all 0.3s; }
+  .step.active { background: #ffd700; color: #1a1a2e; font-weight: bold; }
+  .step.done { background: #27ae60; color: #fff; }
+  .arrow { color: #555; font-size: 14px; }
+
+  /* Canvas overlay container */
+  .celeb-canvas-wrap { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
+  .celeb-canvas-wrap canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+
+  /* ---- ANIMATIONS ---- */
+
+  /* Screen shake utility */
+  @keyframes screenShake {
+    0%, 100% { transform: translate(0, 0); }
+    10% { transform: translate(-8px, 4px); }
+    20% { transform: translate(7px, -5px); }
+    30% { transform: translate(-6px, 3px); }
+    40% { transform: translate(5px, -2px); }
+    50% { transform: translate(-4px, 3px); }
+    60% { transform: translate(3px, -2px); }
+    70% { transform: translate(-2px, 1px); }
+    80% { transform: translate(1px, -1px); }
+    90% { transform: translate(-1px, 0); }
+  }
+  .screen-shake {
+    animation: screenShake 400ms ease-out forwards;
+  }
+
+  /* Early Warning — 과격한 slam + 강한 흔들림 */
+  @keyframes ewSlam {
+    0% { transform: scale(2.0); opacity: 0.3; }
+    25% { transform: scale(0.85); opacity: 1; }
+    40% { transform: scale(1.12); }
+    55% { transform: scale(0.93); }
+    70% { transform: scale(1.05); }
+    85% { transform: scale(0.98); }
+    100% { transform: scale(1.0); }
+  }
+  @keyframes ewShake {
+    0%, 100% { transform: translateX(0); }
+    8% { transform: translateX(8px); }
+    16% { transform: translateX(-8px); }
+    24% { transform: translateX(7px); }
+    32% { transform: translateX(-7px); }
+    40% { transform: translateX(6px); }
+    48% { transform: translateX(-5px); }
+    56% { transform: translateX(4px); }
+    64% { transform: translateX(-4px); }
+    72% { transform: translateX(3px); }
+    80% { transform: translateX(-2px); }
+    90% { transform: translateX(1px); }
+  }
+  @keyframes ewFlash {
+    0% { background: #fff; }
+    15% { background: #ffd700; }
+    40% { background: #ffc107; }
+    70% { background: #ffe082; }
+    100% { background: #fff; }
+  }
+  @keyframes ewGlowFade {
+    0% { box-shadow: 0 0 30px 10px rgba(255,193,7,0.9); }
+    50% { box-shadow: 0 0 20px 6px rgba(255,193,7,0.6); }
+    100% { box-shadow: 0 0 0px 0px rgba(255,193,7,0); }
+  }
+
+  .card.ew-active {
+    animation:
+      ewSlam 600ms cubic-bezier(.17,.67,.29,1.27) forwards,
+      ewShake 500ms linear 100ms 1,
+      ewFlash 700ms ease-out 500ms 1 forwards,
+      ewGlowFade 1500ms ease-out forwards;
+  }
+
+  /* Celebration L1 — 단색 amber flash */
+  @keyframes celebL1Flash {
+    0% { background: #fff; }
+    20% { background: #ffd700; }
+    50% { background: #ffecb3; }
+    100% { background: #fff; }
+  }
+  @keyframes celebL1Pop {
+    0% { transform: scale(1.0); }
+    15% { transform: scale(1.15); }
+    35% { transform: scale(0.92); }
+    55% { transform: scale(1.06); }
+    75% { transform: scale(0.98); }
+    100% { transform: scale(1.0); }
+  }
+  .line-celeb-1 .card:not(.empty) {
+    animation: celebL1Flash 800ms ease-out forwards, celebL1Pop 800ms cubic-bezier(.17,.67,.29,1.27) forwards;
+  }
+
+  /* Celebration L2 — 강한 bounce + 단색 flash + glow */
+  @keyframes celebL2Flash {
+    0% { background: #ffd700; box-shadow: 0 0 25px 8px rgba(255,193,7,0.8); }
+    30% { background: #ffecb3; }
+    100% { background: #fff; box-shadow: 0 0 12px 3px rgba(255,193,7,0.3); }
+  }
+  @keyframes celebL2Bounce {
+    0% { transform: scale(1.4); }
+    20% { transform: scale(0.82); }
+    40% { transform: scale(1.18); }
+    55% { transform: scale(0.93); }
+    70% { transform: scale(1.06); }
+    85% { transform: scale(0.98); }
+    100% { transform: scale(1.0); }
+  }
+  .line-celeb-2 {
+    box-shadow: 0 0 20px 6px rgba(255,193,7,0.6);
+    border-radius: 8px;
+  }
+  .line-celeb-2 .card:not(.empty) {
+    animation:
+      celebL2Flash 800ms ease-out forwards,
+      celebL2Bounce 800ms cubic-bezier(.17,.67,.29,1.27) forwards;
+  }
+
+  /* Celebration L3 — 폭발적 bounce + 강한 flash + 최대 glow */
+  @keyframes celebL3Flash {
+    0% { background: #ffd700; box-shadow: 0 0 40px 12px rgba(255,193,7,1.0); }
+    15% { background: #fff8e1; }
+    40% { background: #ffd700; }
+    60% { background: #ffecb3; }
+    100% { background: #fff; box-shadow: 0 0 18px 5px rgba(255,193,7,0.4); }
+  }
+  @keyframes celebL3Bounce {
+    0% { transform: scale(1.8); }
+    12% { transform: scale(0.75); }
+    28% { transform: scale(1.35); }
+    42% { transform: scale(0.88); }
+    56% { transform: scale(1.15); }
+    70% { transform: scale(0.95); }
+    82% { transform: scale(1.05); }
+    100% { transform: scale(1.0); }
+  }
+  .line-celeb-3 {
+    box-shadow: 0 0 35px 10px rgba(255,193,7,0.9);
+    border-radius: 8px;
+  }
+  .line-celeb-3 .card:not(.empty) {
+    animation:
+      celebL3Flash 1000ms ease-out forwards,
+      celebL3Bounce 1000ms cubic-bezier(.17,.67,.29,1.27) forwards;
+  }
+
+  /* Excited — 단색 amber pulse + 강한 흔들림 */
+  @keyframes excitedPulse {
+    0% { background: #fff; box-shadow: 0 0 12px 3px rgba(255,193,7,0.5); }
+    50% { background: #fff8e1; box-shadow: 0 0 22px 8px rgba(255,193,7,0.9); }
+    100% { background: #fff; box-shadow: 0 0 12px 3px rgba(255,193,7,0.5); }
+  }
+  @keyframes excitedShake {
+    0%, 100% { transform: translateX(0) rotate(0); }
+    25% { transform: translateX(3px) rotate(1.5deg); }
+    75% { transform: translateX(-3px) rotate(-1.5deg); }
+  }
+  .card.excited-active {
+    box-shadow: 0 0 16px 4px rgba(255,193,7,0.7);
+    animation:
+      excitedPulse 1200ms ease-in-out infinite,
+      excitedShake 250ms linear infinite;
+  }
+
+  /* Foul */
+  @keyframes foulShake {
+    0%, 100% { transform: translate(0, 0); }
+    6.25% { transform: translate(6px, -3px); }
+    12.5% { transform: translate(-6px, 3px); }
+    18.75% { transform: translate(5px, -2px); }
+    25% { transform: translate(-5px, 2px); }
+    31.25% { transform: translate(6px, -3px); }
+    37.5% { transform: translate(-4px, 1px); }
+    43.75% { transform: translate(5px, -2px); }
+    50% { transform: translate(-6px, 3px); }
+    56.25% { transform: translate(4px, -1px); }
+    62.5% { transform: translate(-5px, 2px); }
+    68.75% { transform: translate(3px, -2px); }
+    75% { transform: translate(-3px, 1px); }
+    81.25% { transform: translate(2px, -1px); }
+    87.5% { transform: translate(-2px, 1px); }
+    93.75% { transform: translate(1px, 0); }
+  }
+  .board.foul-active {
+    animation: foulShake 1500ms ease-out forwards;
+  }
+  @keyframes foulScatter {
+    to { transform: translate(var(--sx), var(--sy)) rotate(var(--sr)); opacity: 0.4; }
+  }
+  .board.foul-active .card:not(.empty) {
+    animation: foulScatter 500ms ease-out forwards;
+  }
+  @keyframes foulFlash {
+    0% { opacity: 0; }
+    14% { opacity: 0.4; }
+    35% { opacity: 0.4; }
+    100% { opacity: 0; }
+  }
+  .foul-overlay {
+    position: absolute; inset: 0; background: rgba(231,76,60,0.5);
+    border-radius: 12px; pointer-events: none; opacity: 0; z-index: 5;
+  }
+  .foul-overlay.active { animation: foulFlash 1000ms ease-out forwards; }
+  .foul-text {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0);
+    font-size: 36px; font-weight: 900; color: #e74c3c; z-index: 6;
+    text-shadow: 0 0 10px rgba(231,76,60,0.8); pointer-events: none;
+  }
+  @keyframes foulPop {
+    0% { transform: translate(-50%, -50%) scale(0); }
+    40% { transform: translate(-50%, -50%) scale(1.3); }
+    60% { transform: translate(-50%, -50%) scale(0.9); }
+    100% { transform: translate(-50%, -50%) scale(1.0); }
+  }
+  .foul-text.active { animation: foulPop 500ms cubic-bezier(.68,-.55,.27,1.55) forwards; }
+
+  /* Place card — 쾅! 하고 박히는 slam */
+  @keyframes placeSlam {
+    0% { transform: scale(2.5) translateY(-30px); opacity: 0; }
+    30% { transform: scale(0.8) translateY(0); opacity: 1; }
+    45% { transform: scale(1.15) translateY(-4px); }
+    60% { transform: scale(0.92) translateY(0); }
+    75% { transform: scale(1.05); }
+    90% { transform: scale(0.98); }
+    100% { transform: scale(1.0); opacity: 1; }
+  }
+  .card.place-anim {
+    animation: placeSlam 450ms cubic-bezier(.17,.67,.29,1.27) forwards;
+  }
+  /* 배치 시 섹션 전체 흔들림 */
+  @keyframes sectionImpact {
+    0%, 100% { transform: translate(0, 0); }
+    12% { transform: translate(-5px, 3px); }
+    24% { transform: translate(4px, -3px); }
+    36% { transform: translate(-4px, 2px); }
+    48% { transform: translate(3px, -2px); }
+    60% { transform: translate(-2px, 1px); }
+    72% { transform: translate(2px, -1px); }
+    84% { transform: translate(-1px, 1px); }
+  }
+  .section-impact {
+    animation: sectionImpact 350ms ease-out forwards;
+  }
+
+  /* Sidebar active highlight */
+  .spec-section.active { border-left: 3px solid #ffd700; padding-left: 8px; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <h1>🎮 OFC Effect PRD Preview</h1>
+  <div class="banner">
+    <div class="banner-title">⚠ PRD vs Flutter 구현 불일치 요약 (6건)</div>
+    <div class="banner-items">
+      <div class="banner-item">1. Celeb L1 shimmer: PRD 800ms 1회 vs 구현 1200ms repeat</div>
+      <div class="banner-item">2. Celeb L2 shimmer: PRD 800ms 1회 vs 구현 1500ms repeat</div>
+      <div class="banner-item">3. Celeb L2 bounce: PRD 1.1→1.0 vs 구현 누락</div>
+      <div class="banner-item">4. Celeb L3 bounce: PRD 1.15→1.0 vs 구현 누락</div>
+      <div class="banner-item">5. CelebrationOverlay: PRD 1회 vs 구현 repeat</div>
+      <div class="banner-item">6. Foul shake: PRD 1500ms vs 구현 600ms</div>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- SIDEBAR: PRD Spec Panel -->
+  <div class="sidebar">
+    <div class="sidebar-title">📋 PRD 사양 패널</div>
+    <div id="spec-content">
+      <p style="font-size:12px; color:#666;">좌측 섹션 버튼을 클릭하면 해당 이펙트의 PRD 수치가 표시됩니다.</p>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- Section 1: Early Warning -->
+    <div class="section" data-spec="ew">
+      <div class="section-title">1. Early Warning (미완성 라인 패턴 감지)</div>
+      <div class="section-desc">Top 라인: Q♠, Q♥ + 빈 슬롯 — QQ pair 형성 감지</div>
+      <div class="board" id="ew-board">
+        <div class="line">
+          <span class="line-label">Top</span>
+          <div class="card" id="ew-c1"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+          <div class="card" id="ew-c2"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card empty"></div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn" onclick="playEarlyWarning()">Play Early Warning</button>
+        <button class="btn" onclick="resetEW()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 2: Celebration L1 -->
+    <div class="section" data-spec="cl1">
+      <div class="section-title">2. Celebration Level 1 (QQ+ pair / Straight / Flush)</div>
+      <div class="section-desc">Top 라인 완성: Q♠, Q♥, 3♣</div>
+      <div class="board">
+        <div class="line" id="cl1-line">
+          <span class="line-label">Top</span>
+          <div class="card"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+          <div class="card"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card"><span class="rank">3</span><span class="suit suit-black">&clubs;</span></div>
+        </div>
+      </div>
+      <div class="sound-icon" id="cl1-sound">🔊 Win</div>
+      <div class="controls">
+        <button class="btn" onclick="playCelebL1()">Play Level 1</button>
+        <button class="btn" onclick="resetCelebL1()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 3: Celebration L2 -->
+    <div class="section" data-spec="cl2">
+      <div class="section-title">3. Celebration Level 2 (Trips / Full House+)</div>
+      <div class="section-desc">Mid 라인 완성: A♠, A♥, A♦, K♣, K♠ — Full House</div>
+      <div class="celeb-canvas-wrap" id="cl2-wrap">
+        <div class="board">
+          <div class="line" id="cl2-line">
+            <span class="line-label">Mid</span>
+            <div class="card"><span class="rank">A</span><span class="suit suit-black">&spades;</span></div>
+            <div class="card"><span class="rank">A</span><span class="suit suit-red">&hearts;</span></div>
+            <div class="card"><span class="rank">A</span><span class="suit suit-red">&diams;</span></div>
+            <div class="card"><span class="rank">K</span><span class="suit suit-black">&clubs;</span></div>
+            <div class="card"><span class="rank">K</span><span class="suit suit-black">&spades;</span></div>
+          </div>
+        </div>
+        <canvas id="cl2-canvas" width="400" height="200"></canvas>
+      </div>
+      <div class="sound-icon" id="cl2-sound">🔊 Win</div>
+      <div class="controls">
+        <button class="btn" onclick="playCelebL2()">Play Level 2</button>
+        <button class="btn" onclick="resetCelebL2()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 4: Celebration L3 -->
+    <div class="section" data-spec="cl3">
+      <div class="section-title">4. Celebration Level 3 (Quads+ / Straight Flush+)</div>
+      <div class="section-desc">Bottom 라인 완성: K♠, K♥, K♦, K♣, 2♠ — Four of a Kind</div>
+      <div class="celeb-canvas-wrap" id="cl3-wrap">
+        <div class="board">
+          <div class="line" id="cl3-line">
+            <span class="line-label">Bottom</span>
+            <div class="card"><span class="rank">K</span><span class="suit suit-black">&spades;</span></div>
+            <div class="card"><span class="rank">K</span><span class="suit suit-red">&hearts;</span></div>
+            <div class="card"><span class="rank">K</span><span class="suit suit-red">&diams;</span></div>
+            <div class="card"><span class="rank">K</span><span class="suit suit-black">&clubs;</span></div>
+            <div class="card"><span class="rank">2</span><span class="suit suit-black">&spades;</span></div>
+          </div>
+        </div>
+        <canvas id="cl3-canvas" width="400" height="200"></canvas>
+      </div>
+      <div class="sound-icon" id="cl3-sound">🔊 Scoop</div>
+      <div class="controls">
+        <button class="btn" onclick="playCelebL3()">Play Level 3</button>
+        <button class="btn" onclick="resetCelebL3()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 5: Excited -->
+    <div class="section" data-spec="excited">
+      <div class="section-title">5. Excited (핸드 카드 강조)</div>
+      <div class="section-desc">핸드 3장 중 Q♠에만 excited 적용 — 무한 반복</div>
+      <div class="hand-area" id="exc-hand">
+        <div class="card"><span class="rank">7</span><span class="suit suit-black">&clubs;</span></div>
+        <div class="card" id="exc-card"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+        <div class="card"><span class="rank">3</span><span class="suit suit-black">&clubs;</span></div>
+      </div>
+      <div class="controls">
+        <button class="btn" onclick="toggleExcited()">Toggle Excited</button>
+        <button class="btn" onclick="resetExcited()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 6: Foul -->
+    <div class="section" data-spec="foul" style="position:relative;">
+      <div class="section-title">6. Foul (라인 강도 위반)</div>
+      <div class="section-desc">Top: A♠A♥A♦ (Trips) > Mid: 2♣3♦5♠7♥9♣ (Nothing) — 위반!</div>
+      <div class="board" id="foul-board" style="position:relative;">
+        <div class="line">
+          <span class="line-label">Top</span>
+          <div class="card" style="--sx:12px;--sy:-10px;--sr:15deg"><span class="rank">A</span><span class="suit suit-black">&spades;</span></div>
+          <div class="card" style="--sx:-18px;--sy:8px;--sr:-20deg"><span class="rank">A</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card" style="--sx:15px;--sy:12px;--sr:10deg"><span class="rank">A</span><span class="suit suit-red">&diams;</span></div>
+        </div>
+        <div class="line">
+          <span class="line-label">Mid</span>
+          <div class="card" style="--sx:-14px;--sy:-8px;--sr:-12deg"><span class="rank">2</span><span class="suit suit-black">&clubs;</span></div>
+          <div class="card" style="--sx:20px;--sy:5px;--sr:18deg"><span class="rank">3</span><span class="suit suit-red">&diams;</span></div>
+          <div class="card" style="--sx:-10px;--sy:15px;--sr:-8deg"><span class="rank">5</span><span class="suit suit-black">&spades;</span></div>
+          <div class="card" style="--sx:8px;--sy:-12px;--sr:14deg"><span class="rank">7</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card" style="--sx:-16px;--sy:6px;--sr:-18deg"><span class="rank">9</span><span class="suit suit-black">&clubs;</span></div>
+        </div>
+        <div class="line">
+          <span class="line-label">Bottom</span>
+          <div class="card" style="--sx:10px;--sy:14px;--sr:8deg"><span class="rank">T</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card" style="--sx:-12px;--sy:-6px;--sr:-14deg"><span class="rank">J</span><span class="suit suit-black">&spades;</span></div>
+          <div class="card" style="--sx:18px;--sy:10px;--sr:20deg"><span class="rank">Q</span><span class="suit suit-red">&diams;</span></div>
+          <div class="card" style="--sx:-8px;--sy:-14px;--sr:-10deg"><span class="rank">K</span><span class="suit suit-black">&clubs;</span></div>
+          <div class="card" style="--sx:14px;--sy:8px;--sr:12deg"><span class="rank">A</span><span class="suit suit-black">&clubs;</span></div>
+        </div>
+        <div class="foul-overlay" id="foul-overlay"></div>
+        <div class="foul-text" id="foul-text">FOUL!</div>
+      </div>
+      <div class="controls">
+        <button class="btn" onclick="playFoul()">Play Foul</button>
+        <button class="btn" onclick="resetFoul()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 7: Place Card -->
+    <div class="section" data-spec="place">
+      <div class="section-title">7. 기본 배치 (Place Card)</div>
+      <div class="section-desc">빈 슬롯 클릭 → scale 80%→100% + fadeIn</div>
+      <div class="board">
+        <div class="line" id="place-line">
+          <span class="line-label">Top</span>
+          <div class="card empty" id="place-s1" onclick="placeCardAt(1)"></div>
+          <div class="card empty" id="place-s2" onclick="placeCardAt(2)"></div>
+          <div class="card empty" id="place-s3" onclick="placeCardAt(3)"></div>
+        </div>
+      </div>
+      <div class="sound-icon" id="place-sound">🔊 Place</div>
+      <div class="controls">
+        <button class="btn" onclick="placeCardAt(0)">Place Card</button>
+        <button class="btn" onclick="resetPlace()">Reset</button>
+      </div>
+    </div>
+
+    <!-- Section 8: Full Sequence -->
+    <div class="section" data-spec="seq">
+      <div class="section-title">8. Full Sequence (전체 흐름)</div>
+      <div class="section-desc">Excited → Place Q♠ → Early Warning → Place 3♣ → Celebration L1</div>
+
+      <div class="timeline" id="seq-timeline">
+        <span class="step" id="ss1">1.Excited</span><span class="arrow">&rarr;</span>
+        <span class="step" id="ss2">2.Place Q♠</span><span class="arrow">&rarr;</span>
+        <span class="step" id="ss3">3.Early Warning</span><span class="arrow">&rarr;</span>
+        <span class="step" id="ss4">4.Place 3♣</span><span class="arrow">&rarr;</span>
+        <span class="step" id="ss5">5.Celebration L1</span>
+      </div>
+
+      <div class="hand-area" id="seq-hand">
+        <div class="card" id="sh1"><span class="rank">7</span><span class="suit suit-black">&clubs;</span></div>
+        <div class="card" id="sh2"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+        <div class="card" id="sh3"><span class="rank">3</span><span class="suit suit-black">&clubs;</span></div>
+      </div>
+
+      <div class="board" id="seq-board">
+        <div class="line" id="seq-top">
+          <span class="line-label">Top</span>
+          <div class="card" id="st0"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+          <div class="card empty" id="st1"></div>
+          <div class="card empty" id="st2"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn" onclick="playSequence()">Play Sequence</button>
+        <button class="btn" onclick="resetSequence()">Reset</button>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<script>
+// ============================================================
+// PRD Spec Data
+// ============================================================
+const specData = {
+  ew: {
+    title: 'Early Warning',
+    rows: [
+      ['scale', '160%→100%', '160%→100%', ''],
+      ['scale curve', 'elasticOut', 'cubic-bezier(.68,-.55,.27,1.55)', ''],
+      ['scale duration', '500ms', '500ms', ''],
+      ['shake freq', '5Hz', '5Hz', ''],
+      ['shake offset', '±3px horizontal', '±3px', ''],
+      ['shake duration', '400ms', '400ms', ''],
+      ['shimmer', 'amber sweep 700ms', '700ms', ''],
+      ['shimmer start', 'scale 끝난 후', '500ms delay', ''],
+      ['amber glow', '0 0 14px 4px rgba(255,193,7,0.7)', '동일', ''],
+      ['glow fade', 'shimmer 끝나면 fade out', '1500ms', ''],
+      ['총 지속', '1500ms', '1500ms', ''],
+    ]
+  },
+  cl1: {
+    title: 'Celebration Level 1',
+    rows: [
+      ['shimmer', 'amber sweep', 'amber sweep', ''],
+      ['shimmer duration', '800ms', '1200ms', 'DIFF'],
+      ['shimmer repeat', '1회 (forwards)', 'repeat', 'DIFF'],
+      ['shimmer alpha', '0.4', '0.4', ''],
+      ['bounce', '없음', '없음', ''],
+      ['glow', '없음', '없음', ''],
+      ['사운드', 'Win', 'Win', ''],
+    ]
+  },
+  cl2: {
+    title: 'Celebration Level 2',
+    rows: [
+      ['glow', 'amber 0.4, blur 14, spread 3', '동일', ''],
+      ['shimmer', '800ms 1회', '1500ms repeat', 'DIFF'],
+      ['card bounce', '1.1→0.97→1.02→1.0', '누락', 'DIFF'],
+      ['bounce duration', '800ms', '-', 'DIFF'],
+      ['bounce curve', 'cubic-bezier(.68,-.55,.27,1.55)', '-', 'DIFF'],
+      ['Ring 수', '1개', '1개', ''],
+      ['Ring maxRadius', '140px', '140px', ''],
+      ['Ring border', '4px→1px', '4px→1px', ''],
+      ['Sparkle 수', '15개', '15개', ''],
+      ['Sparkle 거리', '40~120px', '40~120px', ''],
+      ['Sparkle 크기', '2~6px', '2~6px', ''],
+      ['Overlay repeat', '1회 (forwards)', 'repeat', 'DIFF'],
+      ['사운드', 'Win', 'Win', ''],
+    ]
+  },
+  cl3: {
+    title: 'Celebration Level 3',
+    rows: [
+      ['glow', 'amber 0.8, blur 24, spread 6', '동일', ''],
+      ['shimmer', '1000ms 1회', '1000ms', ''],
+      ['card bounce', '1.15→0.95→1.05→0.98→1.0', '누락', 'DIFF'],
+      ['bounce duration', '1000ms', '-', 'DIFF'],
+      ['Ring 수', '2개', '2개', ''],
+      ['Ring maxRadius', '175px', '175px', ''],
+      ['Ring 2 delay', '0.15초', '0.15초', ''],
+      ['Ring border', '4px→1px', '4px→1px', ''],
+      ['Sparkle 수', '30개', '30개', ''],
+      ['Sparkle 거리', '60~140px', '60~140px', ''],
+      ['Sparkle 크기', '3~7px', '3~7px', ''],
+      ['Overlay repeat', '1회 (forwards)', 'repeat', 'DIFF'],
+      ['사운드', 'Scoop', 'Scoop', ''],
+    ]
+  },
+  excited: {
+    title: 'Excited',
+    rows: [
+      ['amber glow', '0 0 10px 2px rgba(255,193,7,0.6)', '동일', ''],
+      ['shimmer', '1200ms 무한 alternate', '1200ms alternate', ''],
+      ['shake freq', '3Hz (333ms)', '333ms', ''],
+      ['shake offset', '±1.5px', '±1.5px', ''],
+      ['shake repeat', '무한', '무한', ''],
+    ]
+  },
+  foul: {
+    title: 'Foul',
+    rows: [
+      ['shake freq', '8Hz', '8Hz', ''],
+      ['shake offset', '±6px H, ±3px V', '±6px, ±3px', ''],
+      ['shake duration', '1500ms', '600ms', 'DIFF'],
+      ['scatter offset', '-20~+20px, -15~+15px', '-20~+20px', ''],
+      ['scatter rotation', '-20~+20deg', '-20~+20deg', ''],
+      ['scatter duration', '500ms ease-out', '500ms', ''],
+      ['red overlay', '200ms in, 300ms hold, 500ms out', '200+300+500', ''],
+      ['FOUL! text', 'scale popup', 'scale popup', ''],
+    ]
+  },
+  place: {
+    title: 'Place Card',
+    rows: [
+      ['scale', '80%→100%', '80%→100%', ''],
+      ['scale curve', 'easeOutBack', 'cubic-bezier(.68,-.55,.27,1.55)', ''],
+      ['scale duration', '300ms', '300ms', ''],
+      ['fadeIn', '200ms', '200ms (within 300ms)', ''],
+      ['사운드', 'Place', 'Place', ''],
+    ]
+  },
+  seq: {
+    title: 'Full Sequence',
+    rows: [
+      ['Step 1', 'Excited 1.5초', '1.5초', ''],
+      ['Step 2', 'Place Q♠ (300ms)', '300ms', ''],
+      ['Step 3', 'Early Warning 1.5초', '1.5초', ''],
+      ['Step 4', 'Place 3♣ (300ms)', '300ms', ''],
+      ['Step 5', 'Celebration L1 (800ms)', '800ms', ''],
+    ]
+  }
+};
+
+// ============================================================
+// Show spec panel
+// ============================================================
+function showSpec(key) {
+  const data = specData[key];
+  if (!data) return;
+  const el = document.getElementById('spec-content');
+  // Highlight active sidebar section
+  document.querySelectorAll('.spec-section').forEach(s => s.classList.remove('active'));
+
+  let html = `<div class="spec-section active">
+    <div class="spec-section-title">${data.title}</div>
+    <table class="spec-table">
+      <tr><th>파라미터</th><th>PRD 값</th><th>Flutter 구현</th><th>차이</th></tr>`;
+  data.rows.forEach(r => {
+    const cls = r[3] === 'DIFF' ? ' class="diff"' : '';
+    html += `<tr${cls}><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`;
+  });
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+
+// Auto-show spec when clicking section buttons
+document.querySelectorAll('.section[data-spec]').forEach(sec => {
+  sec.addEventListener('click', () => showSpec(sec.dataset.spec));
+});
+
+// ============================================================
+// Section 1: Early Warning
+// ============================================================
+function shakeSection(el) {
+  // 가장 가까운 .section을 찾아서 흔들기
+  const section = el.closest('.section');
+  if (section) {
+    section.classList.remove('section-impact');
+    void section.offsetWidth;
+    section.classList.add('section-impact');
+    setTimeout(() => section.classList.remove('section-impact'), 400);
+  }
+}
+
+function playEarlyWarning() {
+  resetEW();
+  showSpec('ew');
+  setTimeout(() => {
+    document.getElementById('ew-c1').classList.add('ew-active');
+    document.getElementById('ew-c2').classList.add('ew-active');
+    shakeSection(document.getElementById('ew-board'));
+  }, 10);
+}
+function resetEW() {
+  ['ew-c1','ew-c2'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('ew-active');
+    void el.offsetWidth;
+  });
+}
+
+// ============================================================
+// Section 2: Celebration L1
+// ============================================================
+function playCelebL1() {
+  resetCelebL1();
+  showSpec('cl1');
+  setTimeout(() => {
+    document.getElementById('cl1-line').classList.add('line-celeb-1');
+    document.getElementById('cl1-sound').classList.add('visible');
+    shakeSection(document.getElementById('cl1-line'));
+  }, 10);
+}
+function resetCelebL1() {
+  const line = document.getElementById('cl1-line');
+  line.classList.remove('line-celeb-1');
+  void line.offsetWidth;
+  document.getElementById('cl1-sound').classList.remove('visible');
+}
+
+// ============================================================
+// Section 3: Celebration L2 (with Canvas overlay)
+// ============================================================
+let cl2Anim = null;
+function playCelebL2() {
+  resetCelebL2();
+  showSpec('cl2');
+  setTimeout(() => {
+    document.getElementById('cl2-line').classList.add('line-celeb-2');
+    document.getElementById('cl2-sound').classList.add('visible');
+    shakeSection(document.getElementById('cl2-line'));
+    startCelebOverlay('cl2-canvas', { rings: 1, maxRadius: 140, sparkles: 15, minDist: 40, maxDist: 120, minSize: 2, maxSize: 6, duration: 800 }, v => cl2Anim = v);
+  }, 10);
+}
+function resetCelebL2() {
+  const line = document.getElementById('cl2-line');
+  line.classList.remove('line-celeb-2');
+  void line.offsetWidth;
+  document.getElementById('cl2-sound').classList.remove('visible');
+  if (cl2Anim) { cancelAnimationFrame(cl2Anim); cl2Anim = null; }
+  const c = document.getElementById('cl2-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+// ============================================================
+// Section 4: Celebration L3 (with Canvas overlay)
+// ============================================================
+let cl3Anim = null;
+function playCelebL3() {
+  resetCelebL3();
+  showSpec('cl3');
+  setTimeout(() => {
+    document.getElementById('cl3-line').classList.add('line-celeb-3');
+    document.getElementById('cl3-sound').classList.add('visible');
+    shakeSection(document.getElementById('cl3-line'));
+    startCelebOverlay('cl3-canvas', { rings: 2, maxRadius: 175, sparkles: 30, minDist: 60, maxDist: 140, minSize: 3, maxSize: 7, duration: 1000, ringDelay: 150 }, v => cl3Anim = v);
+  }, 10);
+}
+function resetCelebL3() {
+  const line = document.getElementById('cl3-line');
+  line.classList.remove('line-celeb-3');
+  void line.offsetWidth;
+  document.getElementById('cl3-sound').classList.remove('visible');
+  if (cl3Anim) { cancelAnimationFrame(cl3Anim); cl3Anim = null; }
+  const c = document.getElementById('cl3-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+// ============================================================
+// Canvas CelebrationOverlay
+// ============================================================
+function startCelebOverlay(canvasId, opts, setAnim) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const colors = ['#ffd700', '#ffffff', '#ff8c00'];
+
+  // Generate sparkles
+  const sparkles = [];
+  for (let i = 0; i < opts.sparkles; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = opts.minDist + Math.random() * (opts.maxDist - opts.minDist);
+    const size = opts.minSize + Math.random() * (opts.maxSize - opts.minSize);
+    sparkles.push({ angle, dist, size, color: colors[Math.floor(Math.random() * colors.length)] });
+  }
+
+  const startTime = performance.now();
+  const duration = opts.duration;
+
+  function draw(now) {
+    const elapsed = now - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Rings
+    for (let r = 0; r < opts.rings; r++) {
+      const delay = r * (opts.ringDelay || 0);
+      const rt = Math.max(0, Math.min((elapsed - delay) / duration, 1));
+      if (rt <= 0) continue;
+      const radius = rt * opts.maxRadius;
+      const borderW = 4 - 3 * rt; // 4px -> 1px
+      const alpha = 1 - rt;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+      ctx.lineWidth = Math.max(borderW, 0.5);
+      ctx.stroke();
+    }
+
+    // Sparkles
+    sparkles.forEach(s => {
+      const x = cx + Math.cos(s.angle) * s.dist * t;
+      const y = cy + Math.sin(s.angle) * s.dist * t;
+      const alpha = 1 - t;
+      const size = s.size * (0.5 + 0.5 * t);
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fillStyle = s.color.replace(')', `, ${alpha})`).replace('rgb', 'rgba').replace('#ffd700', `rgba(255,215,0,${alpha})`).replace('#ffffff', `rgba(255,255,255,${alpha})`).replace('#ff8c00', `rgba(255,140,0,${alpha})`);
+      // Simpler fill
+      if (s.color === '#ffd700') ctx.fillStyle = `rgba(255,215,0,${alpha})`;
+      else if (s.color === '#ffffff') ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      else ctx.fillStyle = `rgba(255,140,0,${alpha})`;
+      ctx.fill();
+    });
+
+    if (t < 1) {
+      const id = requestAnimationFrame(draw);
+      setAnim(id);
+    }
+  }
+  const id = requestAnimationFrame(draw);
+  setAnim(id);
+}
+
+// ============================================================
+// Section 5: Excited
+// ============================================================
+let excitedOn = false;
+function toggleExcited() {
+  showSpec('excited');
+  excitedOn = !excitedOn;
+  const card = document.getElementById('exc-card');
+  if (excitedOn) {
+    card.classList.add('excited-active');
+  } else {
+    card.classList.remove('excited-active');
+  }
+}
+function resetExcited() {
+  excitedOn = false;
+  document.getElementById('exc-card').classList.remove('excited-active');
+}
+
+// ============================================================
+// Section 6: Foul
+// ============================================================
+function playFoul() {
+  resetFoul();
+  showSpec('foul');
+  setTimeout(() => {
+    const board = document.getElementById('foul-board');
+    board.classList.add('foul-active');
+    document.getElementById('foul-overlay').classList.add('active');
+    document.getElementById('foul-text').classList.add('active');
+  }, 10);
+}
+function resetFoul() {
+  const board = document.getElementById('foul-board');
+  board.classList.remove('foul-active');
+  document.getElementById('foul-overlay').classList.remove('active');
+  document.getElementById('foul-text').classList.remove('active');
+  void board.offsetWidth;
+  // Reset card transforms
+  board.querySelectorAll('.card:not(.empty)').forEach(c => {
+    c.style.transform = '';
+    c.style.opacity = '';
+  });
+}
+
+// ============================================================
+// Section 7: Place Card
+// ============================================================
+const placeCards = [
+  { rank: 'J', suit: '&spades;', cls: 'suit-black' },
+  { rank: '5', suit: '&hearts;', cls: 'suit-red' },
+  { rank: '9', suit: '&diams;', cls: 'suit-red' },
+];
+let placeIdx = 0;
+
+function placeCardAt(slotOrAuto) {
+  showSpec('place');
+  let slot;
+  if (slotOrAuto === 0) {
+    // auto: find first empty
+    for (let i = 1; i <= 3; i++) {
+      if (document.getElementById(`place-s${i}`).classList.contains('empty')) { slot = i; break; }
+    }
+    if (!slot) return;
+  } else {
+    slot = slotOrAuto;
+  }
+  const el = document.getElementById(`place-s${slot}`);
+  if (!el.classList.contains('empty')) return;
+  const card = placeCards[(placeIdx++) % 3];
+  el.innerHTML = `<span class="rank">${card.rank}</span><span class="suit ${card.cls}">${card.suit}</span>`;
+  el.classList.remove('empty');
+  el.classList.add('place-anim');
+  document.getElementById('place-sound').classList.add('visible');
+  shakeSection(el);
+  setTimeout(() => el.classList.remove('place-anim'), 500);
+}
+
+function resetPlace() {
+  placeIdx = 0;
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById(`place-s${i}`);
+    el.innerHTML = '';
+    el.classList.add('empty');
+    el.classList.remove('place-anim');
+  }
+  document.getElementById('place-sound').classList.remove('visible');
+}
+
+// ============================================================
+// Section 8: Full Sequence
+// ============================================================
+let seqTimers = [];
+function playSequence() {
+  resetSequence();
+  showSpec('seq');
+  const steps = ['ss1','ss2','ss3','ss4','ss5'];
+
+  function markStep(i) {
+    if (i > 0) document.getElementById(steps[i-1]).classList.replace('active','done');
+    document.getElementById(steps[i]).classList.add('active');
+  }
+
+  // Step 1: Excited on Q♠ (1.5s)
+  seqTimers.push(setTimeout(() => {
+    markStep(0);
+    document.getElementById('sh2').classList.add('excited-active');
+  }, 100));
+
+  // Step 2: Place Q♠ at 1.6s
+  seqTimers.push(setTimeout(() => {
+    markStep(1);
+    document.getElementById('sh2').classList.remove('excited-active');
+    document.getElementById('sh2').style.display = 'none';
+    const t1 = document.getElementById('st1');
+    t1.innerHTML = '<span class="rank">Q</span><span class="suit suit-black">&spades;</span>';
+    t1.classList.remove('empty');
+    t1.classList.add('place-anim');
+    shakeSection(t1);
+    setTimeout(() => t1.classList.remove('place-anim'), 500);
+  }, 1600));
+
+  // Step 3: Early Warning at 2.1s (1.5s)
+  seqTimers.push(setTimeout(() => {
+    markStep(2);
+    document.getElementById('st0').classList.add('ew-active');
+    document.getElementById('st1').classList.add('ew-active');
+  }, 2100));
+
+  // Step 4: Place 3♣ at 3.7s
+  seqTimers.push(setTimeout(() => {
+    markStep(3);
+    document.getElementById('st0').classList.remove('ew-active');
+    document.getElementById('st1').classList.remove('ew-active');
+    document.getElementById('sh3').style.display = 'none';
+    const t2 = document.getElementById('st2');
+    t2.innerHTML = '<span class="rank">3</span><span class="suit suit-black">&clubs;</span>';
+    t2.classList.remove('empty');
+    t2.classList.add('place-anim');
+    shakeSection(t2);
+    setTimeout(() => t2.classList.remove('place-anim'), 500);
+  }, 3700));
+
+  // Step 5: Celebration L1 at 4.2s
+  seqTimers.push(setTimeout(() => {
+    markStep(4);
+    document.getElementById('seq-top').classList.add('line-celeb-1');
+  }, 4200));
+
+  // Mark last step done
+  seqTimers.push(setTimeout(() => {
+    document.getElementById(steps[4]).classList.replace('active','done');
+  }, 5200));
+}
+
+function resetSequence() {
+  seqTimers.forEach(t => clearTimeout(t));
+  seqTimers = [];
+  ['ss1','ss2','ss3','ss4','ss5'].forEach(id => {
+    document.getElementById(id).classList.remove('active','done');
+  });
+  document.getElementById('sh2').style.display = '';
+  document.getElementById('sh2').classList.remove('excited-active');
+  document.getElementById('sh3').style.display = '';
+
+  const st0 = document.getElementById('st0');
+  st0.classList.remove('ew-active');
+  void st0.offsetWidth;
+
+  const st1 = document.getElementById('st1');
+  st1.innerHTML = '';
+  st1.classList.add('empty');
+  st1.classList.remove('ew-active', 'place-anim');
+
+  const st2 = document.getElementById('st2');
+  st2.innerHTML = '';
+  st2.classList.add('empty');
+  st2.classList.remove('place-anim');
+
+  document.getElementById('seq-top').classList.remove('line-celeb-1');
+  void document.getElementById('seq-board').offsetWidth;
+}
+
+// Show initial spec hint
+showSpec('ew');
+</script>
+</body>
+</html>

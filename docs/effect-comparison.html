@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OFC Celebration Effect — A vs B vs C</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f23;color:#eee;font-family:'Segoe UI',system-ui,sans-serif;overflow-x:hidden}
+h1{text-align:center;padding:16px;font-size:18px;color:#ffd700;background:#16213e}
+.tabs{display:flex;justify-content:center;gap:0;background:#16213e;padding:0 0 2px}
+.tab{padding:10px 24px;cursor:pointer;font-size:14px;font-weight:bold;color:#888;border-bottom:3px solid transparent;transition:all .2s}
+.tab:hover{color:#ccc}
+.tab.active{color:#ffd700;border-bottom-color:#ffd700}
+.panel{display:none;padding:16px}
+.panel.active{display:block}
+.desc{text-align:center;color:#aaa;font-size:12px;margin:8px 0 16px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;margin:0 4px}
+.badge-low{background:#27ae60;color:#fff}
+.badge-mid{background:#f39c12;color:#fff}
+.badge-high{background:#e74c3c;color:#fff}
+
+/* 보드 공통 */
+.demo-area{max-width:520px;margin:0 auto;position:relative}
+.board{background:#1a2744;border-radius:12px;padding:16px;margin-bottom:12px;position:relative;overflow:visible}
+.line{display:flex;gap:5px;align-items:center;margin:6px 0;position:relative}
+.line-label{width:52px;font-size:11px;color:#777;text-align:right;padding-right:8px;flex-shrink:0}
+.card{width:50px;height:68px;border-radius:7px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:bold;position:relative;z-index:1}
+.card .rank{font-size:17px;line-height:1}
+.card .suit{font-size:15px;line-height:1;margin-top:1px}
+.red{color:#e74c3c}
+.blk{color:#2c3e50}
+.card.empty{background:#1e2d4a;border:1.5px dashed #334}
+
+/* 컨트롤 */
+.controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:12px 0}
+.btn{padding:8px 16px;border:1.5px solid #ffd700;background:transparent;color:#ffd700;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s}
+.btn:hover{background:#ffd700;color:#0f0f23}
+.level-tag{font-size:10px;color:#888;display:block}
+
+/* ===== A: flutter_animate only ===== */
+.a-card-l1{animation:aBounceL1 .5s cubic-bezier(.68,-.55,.27,1.55)}
+@keyframes aBounceL1{0%{transform:scale(1.3)}40%{transform:scale(.95)}70%{transform:scale(1.03)}100%{transform:scale(1)}}
+.a-line-l1{animation:aShimmer .8s ease-out}
+@keyframes aShimmer{0%{box-shadow:inset 0 0 0 0 rgba(255,193,7,0)}30%{box-shadow:inset 200px 0 60px -30px rgba(255,193,7,.25)}60%{box-shadow:inset -200px 0 60px -30px rgba(255,193,7,.15)}100%{box-shadow:inset 0 0 0 0 rgba(255,193,7,0)}}
+
+.a-card-l2{animation:aBounceL2 .6s cubic-bezier(.68,-.55,.27,1.55);box-shadow:0 0 16px 4px rgba(255,193,7,.6)}
+@keyframes aBounceL2{0%{transform:scale(1.6)}20%{transform:scale(.9)translateX(3px)}30%{transform:scale(1.05)translateX(-3px)}40%{transform:scale(.97)translateX(2px)}50%{transform:scale(1.02)translateX(-1px)}100%{transform:scale(1)}}
+.a-line-l2{animation:aGlowBounce .8s ease-out;box-shadow:0 0 14px 3px rgba(255,193,7,.4)}
+@keyframes aGlowBounce{0%{transform:scale(1.08);box-shadow:0 0 24px 6px rgba(255,193,7,.6)}50%{transform:scale(.98)}100%{transform:scale(1);box-shadow:0 0 14px 3px rgba(255,193,7,.4)}}
+
+.a-card-l3{animation:aBounceL3 .7s cubic-bezier(.68,-.55,.27,1.55);box-shadow:0 0 22px 6px rgba(255,193,7,.8)}
+@keyframes aBounceL3{0%{transform:scale(1.8)}15%{transform:scale(.85)translateX(4px)}25%{transform:scale(1.1)translateX(-4px)}35%{transform:scale(.93)translateX(3px)}45%{transform:scale(1.04)translateX(-2px)}100%{transform:scale(1)}}
+.a-line-l3{animation:aGlowBounceL3 1s ease-out;box-shadow:0 0 24px 6px rgba(255,193,7,.7)}
+@keyframes aGlowBounceL3{0%{transform:scale(1.12);box-shadow:0 0 36px 10px rgba(255,193,7,.9)}30%{transform:scale(.96)}50%{transform:scale(1.03)}100%{transform:scale(1);box-shadow:0 0 24px 6px rgba(255,193,7,.7)}}
+
+/* ===== B: flutter_animate + confetti ===== */
+.b-card-l1{animation:aBounceL1 .5s cubic-bezier(.68,-.55,.27,1.55);box-shadow:0 0 10px 2px rgba(255,193,7,.5)}
+.b-line-l1{animation:aShimmer .8s ease-out}
+
+.b-card-l2{animation:aBounceL2 .6s cubic-bezier(.68,-.55,.27,1.55);box-shadow:0 0 16px 4px rgba(255,193,7,.6)}
+.b-line-l2{animation:aGlowBounce .8s ease-out;box-shadow:0 0 14px 3px rgba(255,193,7,.4)}
+
+.b-card-l3{animation:aBounceL3 .7s cubic-bezier(.68,-.55,.27,1.55);box-shadow:0 0 22px 6px rgba(255,193,7,.8)}
+.b-line-l3{animation:aGlowBounceL3 1s ease-out;box-shadow:0 0 24px 6px rgba(255,193,7,.7)}
+
+/* confetti canvas */
+.confetti-wrap{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+
+/* ===== C: Lottie-style (CSS mimicking premium animation) ===== */
+.c-card-l1{animation:cPulseL1 .6s ease-out;box-shadow:0 0 12px 3px rgba(255,215,0,.5)}
+@keyframes cPulseL1{0%{transform:scale(1.2);filter:brightness(1.8)}50%{transform:scale(.97);filter:brightness(1.2)}100%{transform:scale(1);filter:brightness(1)}}
+.c-line-l1{animation:cSweepL1 1s ease-out}
+@keyframes cSweepL1{0%{background:linear-gradient(90deg,transparent 0%,rgba(255,215,0,.3) 0%,transparent 0%)}50%{background:linear-gradient(90deg,transparent 0%,rgba(255,215,0,.3) 50%,transparent 100%)}100%{background:transparent}}
+
+.c-card-l2{animation:cExpand .7s cubic-bezier(.17,.67,.29,1.27);box-shadow:0 0 20px 5px rgba(255,215,0,.7)}
+@keyframes cExpand{0%{transform:scale(1.6)rotate(-5deg);filter:brightness(2);box-shadow:0 0 30px 10px rgba(255,215,0,.9)}20%{transform:scale(.9)rotate(3deg)}40%{transform:scale(1.08)rotate(-1deg)}60%{transform:scale(.98)rotate(.5deg)}100%{transform:scale(1)rotate(0);filter:brightness(1)}}
+.c-line-l2{animation:cGlowSweep 1.2s ease-out;box-shadow:0 0 18px 4px rgba(255,215,0,.5);border-radius:8px}
+@keyframes cGlowSweep{0%{transform:scale(1.06);box-shadow:0 0 30px 8px rgba(255,215,0,.7)}100%{transform:scale(1);box-shadow:0 0 18px 4px rgba(255,215,0,.5)}}
+
+.c-card-l3{animation:cMega .9s cubic-bezier(.17,.67,.29,1.27);box-shadow:0 0 28px 8px rgba(255,215,0,.9)}
+@keyframes cMega{0%{transform:scale(2)rotate(-8deg);filter:brightness(2.5)saturate(2);box-shadow:0 0 50px 15px rgba(255,215,0,1)}10%{transform:scale(.8)rotate(6deg)}25%{transform:scale(1.15)rotate(-3deg)}40%{transform:scale(.95)rotate(1.5deg)}55%{transform:scale(1.05)rotate(-.5deg)}100%{transform:scale(1)rotate(0);filter:brightness(1)saturate(1)}}
+.c-line-l3{animation:cMegaGlow 1.5s ease-out;box-shadow:0 0 30px 8px rgba(255,215,0,.8);border-radius:8px}
+@keyframes cMegaGlow{0%{transform:scale(1.1);box-shadow:0 0 50px 15px rgba(255,215,0,1)}100%{transform:scale(1);box-shadow:0 0 30px 8px rgba(255,215,0,.8)}}
+
+/* lottie-style ring burst */
+.c-ring{position:absolute;top:50%;left:50%;width:0;height:0;border-radius:50%;border:3px solid rgba(255,215,0,.8);transform:translate(-50%,-50%);pointer-events:none;z-index:10}
+.c-ring.active{animation:ringBurst .8s ease-out forwards}
+@keyframes ringBurst{0%{width:0;height:0;opacity:1;border-width:4px}100%{width:280px;height:280px;opacity:0;border-width:1px}}
+.c-ring2.active{animation:ringBurst2 1s ease-out .15s forwards}
+@keyframes ringBurst2{0%{width:0;height:0;opacity:.7;border-width:3px}100%{width:350px;height:350px;opacity:0;border-width:1px}}
+
+/* sparkle stars for C */
+.sparkle{position:absolute;pointer-events:none;z-index:12}
+.sparkle i{position:absolute;width:4px;height:4px;background:#ffd700;border-radius:50%;animation:sparkleFly 1s ease-out forwards}
+@keyframes sparkleFly{0%{transform:translate(0,0)scale(1);opacity:1}100%{transform:translate(var(--tx),var(--ty))scale(0);opacity:0}}
+</style>
+</head>
+<body>
+
+<h1>Celebration Effect Comparison</h1>
+<div class="tabs">
+  <div class="tab active" onclick="showTab('a')">A. flutter_animate Only</div>
+  <div class="tab" onclick="showTab('b')">B. + Confetti Particles</div>
+  <div class="tab" onclick="showTab('c')">C. + Lottie Premium</div>
+</div>
+
+<!-- ===== A: flutter_animate only ===== -->
+<div class="panel active" id="panel-a">
+  <p class="desc">기존 flutter_animate만 사용 — 추가 패키지 없음 <span class="badge badge-low">의존성 0</span></p>
+  <div class="demo-area">
+    <div class="board" id="a-board">
+      <div class="line" id="a-top">
+        <span class="line-label">Top</span>
+        <div class="card" id="a-t0"><span class="rank">Q</span><span class="suit blk">&spades;</span></div>
+        <div class="card" id="a-t1"><span class="rank">Q</span><span class="suit red">&hearts;</span></div>
+        <div class="card" id="a-t2"><span class="rank">3</span><span class="suit blk">&clubs;</span></div>
+      </div>
+      <div class="line" id="a-mid">
+        <span class="line-label">Mid</span>
+        <div class="card"><span class="rank">A</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+      </div>
+      <div class="line" id="a-bot">
+        <span class="line-label">Bottom</span>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">2</span><span class="suit blk">&spades;</span></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="playA(1)">Level 1<span class="level-tag">QQ+ Pair</span></button>
+      <button class="btn" onclick="playA(2)">Level 2<span class="level-tag">Full House</span></button>
+      <button class="btn" onclick="playA(3)">Level 3<span class="level-tag">Quads</span></button>
+      <button class="btn" onclick="resetA()">Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== B: + Confetti ===== -->
+<div class="panel" id="panel-b">
+  <p class="desc">flutter_animate + confetti 파티클 <span class="badge badge-mid">+1 패키지</span></p>
+  <div class="demo-area">
+    <div class="board" id="b-board" style="position:relative;overflow:visible">
+      <canvas id="b-confetti" class="confetti-wrap"></canvas>
+      <div class="line" id="b-top">
+        <span class="line-label">Top</span>
+        <div class="card" id="b-t0"><span class="rank">Q</span><span class="suit blk">&spades;</span></div>
+        <div class="card" id="b-t1"><span class="rank">Q</span><span class="suit red">&hearts;</span></div>
+        <div class="card" id="b-t2"><span class="rank">3</span><span class="suit blk">&clubs;</span></div>
+      </div>
+      <div class="line" id="b-mid">
+        <span class="line-label">Mid</span>
+        <div class="card"><span class="rank">A</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+      </div>
+      <div class="line" id="b-bot">
+        <span class="line-label">Bottom</span>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">2</span><span class="suit blk">&spades;</span></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="playB(1)">Level 1<span class="level-tag">QQ+ Pair</span></button>
+      <button class="btn" onclick="playB(2)">Level 2<span class="level-tag">Full House</span></button>
+      <button class="btn" onclick="playB(3)">Level 3<span class="level-tag">Quads</span></button>
+      <button class="btn" onclick="resetB()">Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== C: Lottie Premium ===== -->
+<div class="panel" id="panel-c">
+  <p class="desc">프리미엄 애니메이션 — ring burst + sparkle + 강한 bounce <span class="badge badge-high">+2 패키지</span></p>
+  <div class="demo-area">
+    <div class="board" id="c-board" style="position:relative;overflow:visible">
+      <div class="c-ring" id="c-ring1"></div>
+      <div class="c-ring c-ring2" id="c-ring2"></div>
+      <div class="sparkle" id="c-sparkles"></div>
+      <div class="line" id="c-top">
+        <span class="line-label">Top</span>
+        <div class="card" id="c-t0"><span class="rank">Q</span><span class="suit blk">&spades;</span></div>
+        <div class="card" id="c-t1"><span class="rank">Q</span><span class="suit red">&hearts;</span></div>
+        <div class="card" id="c-t2"><span class="rank">3</span><span class="suit blk">&clubs;</span></div>
+      </div>
+      <div class="line" id="c-mid">
+        <span class="line-label">Mid</span>
+        <div class="card"><span class="rank">A</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">A</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+      </div>
+      <div class="line" id="c-bot">
+        <span class="line-label">Bottom</span>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&spades;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&hearts;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit red">&diams;</span></div>
+        <div class="card"><span class="rank">K</span><span class="suit blk">&clubs;</span></div>
+        <div class="card"><span class="rank">2</span><span class="suit blk">&spades;</span></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="playC(1)">Level 1<span class="level-tag">QQ+ Pair</span></button>
+      <button class="btn" onclick="playC(2)">Level 2<span class="level-tag">Full House</span></button>
+      <button class="btn" onclick="playC(3)">Level 3<span class="level-tag">Quads</span></button>
+      <button class="btn" onclick="resetC()">Reset</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// Tab switching
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab:nth-child(${id==='a'?1:id==='b'?2:3})`).classList.add('active');
+  document.getElementById('panel-'+id).classList.add('active');
+}
+
+// Utility: force reflow to restart animations
+function reflow(el) { void el.offsetWidth; }
+function clearClasses(el, ...cls) { cls.forEach(c => el.classList.remove(c)); reflow(el); }
+
+// ===== A: flutter_animate only =====
+function playA(level) {
+  resetA();
+  setTimeout(() => {
+    const lineId = level===1?'a-top':level===2?'a-mid':'a-bot';
+    const line = document.getElementById(lineId);
+    line.classList.add(`a-line-l${level}`);
+    line.querySelectorAll('.card').forEach(c => c.classList.add(`a-card-l${level}`));
+  }, 20);
+}
+function resetA() {
+  ['a-top','a-mid','a-bot'].forEach(id => {
+    const el = document.getElementById(id);
+    [1,2,3].forEach(l => { el.classList.remove(`a-line-l${l}`); el.querySelectorAll('.card').forEach(c => c.classList.remove(`a-card-l${l}`)); });
+    reflow(el);
+  });
+}
+
+// ===== B: flutter_animate + confetti =====
+let confettiParticles = [];
+let confettiAnim = null;
+const bCanvas = document.getElementById('b-confetti');
+const bCtx = bCanvas.getContext('2d');
+
+function resizeBCanvas() {
+  const board = document.getElementById('b-board');
+  bCanvas.width = board.offsetWidth;
+  bCanvas.height = board.offsetHeight;
+}
+
+function spawnConfetti(count, originY, spread) {
+  resizeBCanvas();
+  const cx = bCanvas.width / 2;
+  const colors = ['#ffd700','#ffb300','#fff176','#ffe082','#ffffff','#ff8f00'];
+  for (let i = 0; i < count; i++) {
+    confettiParticles.push({
+      x: cx + (Math.random()-.5)*100,
+      y: originY,
+      vx: (Math.random()-.5) * spread,
+      vy: -Math.random() * 8 - 4,
+      w: Math.random()*6+3,
+      h: Math.random()*4+2,
+      rot: Math.random()*360,
+      rv: (Math.random()-.5)*15,
+      color: colors[Math.floor(Math.random()*colors.length)],
+      gravity: 0.15 + Math.random()*0.1,
+      life: 1,
+      decay: 0.008 + Math.random()*0.005
+    });
+  }
+  if (!confettiAnim) animateConfetti();
+}
+
+function animateConfetti() {
+  bCtx.clearRect(0, 0, bCanvas.width, bCanvas.height);
+  confettiParticles = confettiParticles.filter(p => p.life > 0);
+  for (const p of confettiParticles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity;
+    p.vx *= 0.99;
+    p.rot += p.rv;
+    p.life -= p.decay;
+    bCtx.save();
+    bCtx.translate(p.x, p.y);
+    bCtx.rotate(p.rot * Math.PI/180);
+    bCtx.globalAlpha = Math.max(0, p.life);
+    bCtx.fillStyle = p.color;
+    bCtx.fillRect(-p.w/2, -p.h/2, p.w, p.h);
+    bCtx.restore();
+  }
+  if (confettiParticles.length > 0) {
+    confettiAnim = requestAnimationFrame(animateConfetti);
+  } else {
+    confettiAnim = null;
+  }
+}
+
+function playB(level) {
+  resetB();
+  setTimeout(() => {
+    const lineId = level===1?'b-top':level===2?'b-mid':'b-bot';
+    const line = document.getElementById(lineId);
+    line.classList.add(`b-line-l${level}`);
+    line.querySelectorAll('.card').forEach(c => c.classList.add(`b-card-l${level}`));
+    if (level >= 2) {
+      const rect = line.getBoundingClientRect();
+      const boardRect = document.getElementById('b-board').getBoundingClientRect();
+      const originY = rect.top - boardRect.top + rect.height/2;
+      const count = level === 3 ? 50 : 20;
+      const spread = level === 3 ? 12 : 8;
+      spawnConfetti(count, originY, spread);
+      if (level === 3) setTimeout(() => spawnConfetti(30, originY, 10), 200);
+    }
+  }, 20);
+}
+
+function resetB() {
+  confettiParticles = [];
+  if (bCtx) bCtx.clearRect(0,0,bCanvas.width,bCanvas.height);
+  ['b-top','b-mid','b-bot'].forEach(id => {
+    const el = document.getElementById(id);
+    [1,2,3].forEach(l => { el.classList.remove(`b-line-l${l}`); el.querySelectorAll('.card').forEach(c => c.classList.remove(`b-card-l${l}`)); });
+    reflow(el);
+  });
+}
+
+// ===== C: Lottie Premium =====
+function createSparkles(container, count, centerX, centerY) {
+  container.innerHTML = '';
+  container.style.left = centerX + 'px';
+  container.style.top = centerY + 'px';
+  for (let i = 0; i < count; i++) {
+    const s = document.createElement('i');
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 40 + Math.random() * 80;
+    s.style.setProperty('--tx', Math.cos(angle)*dist + 'px');
+    s.style.setProperty('--ty', Math.sin(angle)*dist + 'px');
+    s.style.animationDelay = Math.random()*0.3 + 's';
+    s.style.width = (2+Math.random()*4) + 'px';
+    s.style.height = s.style.width;
+    s.style.background = Math.random()>.3 ? '#ffd700' : '#fff';
+    container.appendChild(s);
+  }
+}
+
+function playC(level) {
+  resetC();
+  setTimeout(() => {
+    const lineId = level===1?'c-top':level===2?'c-mid':'c-bot';
+    const line = document.getElementById(lineId);
+    line.classList.add(`c-line-l${level}`);
+    line.querySelectorAll('.card').forEach(c => c.classList.add(`c-card-l${level}`));
+
+    if (level >= 2) {
+      const rect = line.getBoundingClientRect();
+      const boardRect = document.getElementById('c-board').getBoundingClientRect();
+      const cx = rect.left - boardRect.left + rect.width/2;
+      const cy = rect.top - boardRect.top + rect.height/2;
+
+      // Ring burst
+      const ring1 = document.getElementById('c-ring1');
+      const ring2 = document.getElementById('c-ring2');
+      ring1.style.top = cy+'px'; ring1.style.left = cx+'px';
+      ring2.style.top = cy+'px'; ring2.style.left = cx+'px';
+      ring1.classList.add('active');
+      if (level === 3) ring2.classList.add('active');
+
+      // Sparkles
+      const sparkleCount = level === 3 ? 30 : 15;
+      createSparkles(document.getElementById('c-sparkles'), sparkleCount, cx, cy);
+    }
+  }, 20);
+}
+
+function resetC() {
+  ['c-top','c-mid','c-bot'].forEach(id => {
+    const el = document.getElementById(id);
+    [1,2,3].forEach(l => { el.classList.remove(`c-line-l${l}`); el.querySelectorAll('.card').forEach(c => c.classList.remove(`c-card-l${l}`)); });
+    reflow(el);
+  });
+  const r1 = document.getElementById('c-ring1');
+  const r2 = document.getElementById('c-ring2');
+  r1.classList.remove('active'); r2.classList.remove('active');
+  reflow(r1); reflow(r2);
+  document.getElementById('c-sparkles').innerHTML = '';
+}
+</script>
+</body>
+</html>

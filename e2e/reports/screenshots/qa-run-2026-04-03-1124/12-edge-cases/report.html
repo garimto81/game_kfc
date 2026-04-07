@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>E2E Screenshot Report — 12-edge-cases</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
+    h1 { color: #00d2ff; }
+    .checkpoint { margin: 30px 0; border: 1px solid #333; border-radius: 8px; padding: 16px; background: #16213e; }
+    .checkpoint h2 { color: #e94560; margin-top: 0; }
+    .checkpoint .desc { color: #aaa; font-size: 0.9em; margin-bottom: 12px; }
+    .screenshots { display: flex; gap: 12px; overflow-x: auto; }
+    .screenshot { flex: 0 0 auto; text-align: center; }
+    .screenshot img { max-width: 480px; border: 2px solid #333; border-radius: 4px; }
+    .screenshot .name { font-weight: bold; color: #00d2ff; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>E2E Screenshot Report: 12-edge-cases</h1>
+  <p>Total checkpoints: 3 | Total screenshots: 6</p>
+  
+  <div class="checkpoint">
+    <h2>12-UNDO-BEFORE</h2>
+    <div class="desc">배치 전</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="12-UNDO-BEFORE-UndoTest.png" alt="12-UNDO-BEFORE - UndoTest" />
+        <div class="name">UndoTest</div>
+      </div>
+      <div class="screenshot">
+        <img src="12-UNDO-BEFORE-Partner.png" alt="12-UNDO-BEFORE - Partner" />
+        <div class="name">Partner</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>12-UNDO-PLACE</h2>
+    <div class="desc">카드 배치 취소 (unplaceCard)</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="12-UNDO-PLACE-UndoTest.png" alt="12-UNDO-PLACE - UndoTest" />
+        <div class="name">UndoTest</div>
+      </div>
+      <div class="screenshot">
+        <img src="12-UNDO-PLACE-Partner.png" alt="12-UNDO-PLACE - Partner" />
+        <div class="name">Partner</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>12-UNDO-ALL</h2>
+    <div class="desc">전체 되돌리기</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="12-UNDO-ALL-UndoTest.png" alt="12-UNDO-ALL - UndoTest" />
+        <div class="name">UndoTest</div>
+      </div>
+      <div class="screenshot">
+        <img src="12-UNDO-ALL-Partner.png" alt="12-UNDO-ALL - Partner" />
+        <div class="name">Partner</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

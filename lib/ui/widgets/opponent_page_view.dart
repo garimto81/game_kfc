@@ -31,6 +31,9 @@ class _OpponentPageViewState extends State<OpponentPageView> {
     super.didUpdateWidget(oldWidget);
     if (_currentPage >= widget.opponents.length) {
       _currentPage = widget.opponents.isEmpty ? 0 : widget.opponents.length - 1;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(_currentPage);
+      }
     }
   }
 

@@ -8,6 +8,7 @@ import { test as base, Browser, BrowserContext, Page } from '@playwright/test';
 import { WsInterceptor, attachInterceptor } from '../helpers/ws-interceptor';
 import { WSGameClient } from '../helpers/ws-game-client';
 import { ScreenshotManager } from '../helpers/screenshot-manager';
+import path from 'path';
 
 /** 기존 PlayerHandle (후방 호환) */
 export interface PlayerHandle {
@@ -77,7 +78,9 @@ export const test = base.extend<MultiPlayerFixtures>({
     const factory = async (count: number, names?: string[]): Promise<HybridPlayer[]> => {
       for (let i = 0; i < count; i++) {
         const playerName = names?.[i] ?? `Player${i + 1}`;
-        const context = await browser.newContext();
+        const context = await browser.newContext({
+          recordVideo: { dir: path.resolve(__dirname, '..', 'test-results', 'videos') },
+        });
         const page = await context.newPage();
         const interceptor = await attachInterceptor(page, playerName);
         const ws = new WSGameClient(playerName);
@@ -97,11 +100,12 @@ export const test = base.extend<MultiPlayerFixtures>({
   },
 
   screenshotManager: async ({}, use, testInfo) => {
-    const testId = testInfo.title
-      .replace(/[^a-zA-Z0-9가-힣]/g, '-')
-      .replace(/-+/g, '-')
-      .substring(0, 80);
-    const manager = new ScreenshotManager(testId);
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toTimeString().slice(0, 5).replace(':', '');
+    const runId = process.env.QA_RUN_ID || `qa-run-${dateStr}-${timeStr}`;
+    const specFile = path.basename(testInfo.file, '.spec.ts');
+    const manager = new ScreenshotManager(runId, specFile);
     await use(manager);
     manager.generateReport();
   },

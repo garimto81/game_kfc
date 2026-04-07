@@ -129,25 +129,90 @@ export async function dumpFlutterDom(page: Page): Promise<string> {
  * CanvasKit Semantics 트리를 강제 활성화한다
  */
 export async function connectToServer(page: Page): Promise<void> {
-  await page.goto('/');
-  // Flutter Web이 로드될 때까지 대기
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(3000); // Flutter CanvasKit 초기화 대기
+  // WebSocket 캡처 훅 주입 (Flutter가 게임 WS 생성 전에)
+  await page.addInitScript(() => {
+    (window as any).__gameWs = null;
+    (window as any).__gameWsMessages = [] as any[];
+    const OrigWS = window.WebSocket;
+    (window as any).WebSocket = function(url: string, protocols?: string | string[]) {
+      const ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+      if (url.includes('/ws/game/')) {
+        (window as any).__gameWs = ws;
+        ws.addEventListener('message', (e: MessageEvent) => {
+          try {
+            const msg = JSON.parse(e.data);
+            (window as any).__gameWsMessages.push(msg);
+          } catch {}
+        });
+      }
+      return ws;
+    } as any;
+    (window as any).WebSocket.prototype = OrigWS.prototype;
+    Object.assign((window as any).WebSocket, OrigWS);
+  });
 
-  // CanvasKit Semantics 강제 활성화
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(3000);
+
   const semanticsFound = await ensureSemantics(page);
   console.log(`[connectToServer] Semantics host found: ${semanticsFound}`);
 
   if (!semanticsFound) {
-    // 재시도: Flutter 로딩이 느릴 수 있음
     await page.waitForTimeout(2000);
-    const retry = await ensureSemantics(page);
-    console.log(`[connectToServer] Semantics retry: ${retry}`);
+    await ensureSemantics(page);
   }
+}
 
-  // DOM 구조 디버그 출력
-  const dom = await dumpFlutterDom(page);
-  console.log(`[connectToServer] Flutter DOM (first 2000 chars): ${dom.substring(0, 2000)}`);
+/**
+ * Flutter 페이지의 게임 WebSocket을 통해 메시지 전송
+ * (Flutter 앱 자체의 WS 연결을 사용 → 서버가 동일 플레이어로 인식)
+ */
+export async function sendGameWsMessage(
+  page: Page,
+  type: string,
+  payload: Record<string, any> = {}
+): Promise<void> {
+  await page.evaluate(({ type, payload }) => {
+    const ws = (window as any).__gameWs;
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type, payload }));
+    }
+  }, { type, payload });
+}
+
+/**
+ * Flutter 페이지의 게임 WS에서 특정 타입 메시지 대기
+ */
+export async function waitForGameWsMessage(
+  page: Page,
+  type: string,
+  timeoutMs = 30000
+): Promise<any> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const msg = await page.evaluate((type) => {
+      const msgs = (window as any).__gameWsMessages || [];
+      const idx = msgs.findIndex((m: any) => m.type === type);
+      if (idx >= 0) {
+        return msgs.splice(idx, 1)[0];
+      }
+      return null;
+    }, type);
+    if (msg) return msg;
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`[waitForGameWsMessage] Timeout waiting for '${type}' (${timeoutMs}ms)`);
+}
+
+/**
+ * Flutter 페이지의 WS 연결 상태 확인
+ */
+export async function isGameWsConnected(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const ws = (window as any).__gameWs;
+    return ws !== null && ws.readyState === 1;
+  });
 }
 
 /**
@@ -476,6 +541,152 @@ export async function sendEmote(page: Page, emoteId: string): Promise<void> {
     }
   }
   await page.waitForTimeout(300);
+}
+
+// ============================================================
+// Flutter UI를 통한 방 참가 (roomId 기반)
+// ============================================================
+
+/**
+ * Flutter UI를 통해 특정 방에 참가 (roomId 기반)
+ * 로비에서 room-item-{roomId} 셀렉터로 방을 찾아 Join 버튼 클릭
+ */
+export async function joinRoomById(
+  page: Page,
+  roomId: string,
+  playerName: string
+): Promise<void> {
+  // 방이 로비에 나타날 때까지 대기
+  // Playwright의 role-based locator 사용 (flt-semantics 의존 제거)
+  const roomLocator = page.getByRole('group', { name: new RegExp(`room-item-${roomId}`) });
+  let found = false;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const count = await roomLocator.count().catch(() => 0);
+    if (count > 0) {
+      found = true;
+      break;
+    }
+    // 리로드하여 최신 방 목록 로드
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(3000);
+    await ensureSemantics(page);
+    await page.waitForTimeout(1500);
+  }
+
+  if (!found) {
+    // 디버그: ARIA 스냅샷
+    const ariaSnapshot = await page.locator('body').ariaSnapshot().catch(() => 'N/A');
+    console.log(`[joinRoomById] ARIA snapshot: ${ariaSnapshot.substring(0, 3000)}`);
+    throw new Error(`Room "${roomId}" not found in lobby after attempts.`);
+  }
+
+  // Join 버튼 클릭 — 방 내부의 Join 버튼 찾기
+  const joinBtn = roomLocator.getByRole('button', { name: 'Join' });
+  if (await joinBtn.count().catch(() => 0) > 0) {
+    await joinBtn.first().click();
+  } else {
+    // fallback: 방 영역 클릭 후 글로벌 Join 버튼
+    await roomLocator.click();
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Join' }).first().click();
+  }
+
+  // 이름 입력 다이얼로그 — role-based 셀렉터 사용
+  await page.waitForTimeout(500);
+  const nameTextbox = page.getByRole('textbox', { name: /player-name/i });
+  if (await nameTextbox.isVisible({ timeout: 3000 }).catch(() => false)) {
+    // 기존 이름 지우고 새 이름 입력
+    await nameTextbox.click();
+    await nameTextbox.fill('');
+    await nameTextbox.fill(playerName);
+    await page.waitForTimeout(300);
+
+    // 다이얼로그 내 Join 버튼 클릭 (Cancel과 구분)
+    const dialogJoinBtn = page.getByRole('button', { name: 'Join' }).last();
+    await dialogJoinBtn.click();
+  }
+
+  // 게임 화면 진입 대기 (대기실 또는 게임 화면)
+  try {
+    // start-game-button 또는 hand-area가 보일 때까지
+    await page.locator(`${P}[aria-label="start-game-button"], ${P}[aria-label="hand-area"]`)
+      .first().waitFor({ state: 'visible', timeout: 15000 });
+  } catch {
+    console.log('[joinRoomById] Warning: game screen not detected after join, continuing...');
+  }
+}
+
+/**
+ * Flutter UI를 통해 한 라운드 카드 배치 (role-based 셀렉터)
+ * css=pierce/ 대신 getByLabel 사용하여 CanvasKit 호환
+ */
+export async function playRoundViaUI(
+  page: Page,
+  round: number,
+  activePlayers: number
+): Promise<void> {
+  // 카드가 핸드에 나타날 때까지 대기 (hand-card-0 라벨)
+  try {
+    await page.getByLabel(/^hand-card-0$/).waitFor({ state: 'visible', timeout: 30000 });
+  } catch {
+    await page.waitForTimeout(3000);
+  }
+  await page.waitForTimeout(500);
+
+  // 카드 배치 헬퍼 (getByLabel 기반)
+  const placeCard = async (line: 'top' | 'mid' | 'bottom') => {
+    // 첫 번째 핸드 카드 클릭
+    const card = page.getByLabel(/^hand-card-\d+$/).first();
+    if (await card.isVisible().catch(() => false)) {
+      await card.click();
+      await page.waitForTimeout(300);
+      // 보드 라인 영역 클릭
+      const boardLine = page.getByLabel(`board-line-${line}`);
+      if (await boardLine.isVisible().catch(() => false)) {
+        await boardLine.click();
+      }
+    }
+    await page.waitForTimeout(300);
+  };
+
+  const discardFirstCard = async () => {
+    const card = page.getByLabel(/^hand-card-\d+$/).first();
+    if (await card.isVisible().catch(() => false)) {
+      await card.click();
+      await page.waitForTimeout(300);
+      const discardBtn = page.getByLabel(/discard/i);
+      if (await discardBtn.count() > 0) {
+        await discardBtn.first().click();
+      }
+    }
+    await page.waitForTimeout(300);
+  };
+
+  if (round === 1) {
+    // R1: 5장 → bottom 2, mid 2, top 1
+    await placeCard('bottom');
+    await placeCard('bottom');
+    await placeCard('mid');
+    await placeCard('mid');
+    await placeCard('top');
+  } else if (round === 5 && activePlayers >= 4) {
+    // R5 (4-6인): 2장, 디스카드 없음
+    await placeCard('bottom');
+    await placeCard('mid');
+  } else {
+    // R2-R4 (또는 2-3인 R5): 3장 → 2 배치 + 1 디스카드
+    await placeCard('bottom');
+    await placeCard('mid');
+    await discardFirstCard();
+  }
+
+  // Confirm 버튼 클릭
+  const confirmBtn = page.getByLabel('confirm-button');
+  if (await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await confirmBtn.click();
+  }
+  await page.waitForTimeout(500);
 }
 
 // ============================================================

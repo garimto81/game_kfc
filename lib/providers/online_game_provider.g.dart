@@ -7,7 +7,7 @@ part of 'online_game_provider.dart';
 // **************************************************************************
 
 String _$onlineGameNotifierHash() =>
-    r'b4952c96384b38bde55555e2621bb0d9c44f7672';
+    r'97f00cee31d10072ffffa7a18656d7b0854702fe';
 
 /// See also [OnlineGameNotifier].
 @ProviderFor(OnlineGameNotifier)

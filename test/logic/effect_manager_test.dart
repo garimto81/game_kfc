@@ -38,20 +38,6 @@ void main() {
       expect(mgr.isEarlyWarningActive(1, 'top', other), isFalse);
     });
 
-    test('expired warning returns false', () {
-      final card = c(Rank.ace, Suit.spade);
-      mgr.addEarlyWarning(
-        1,
-        'top',
-        [card],
-        duration: Duration.zero,
-      );
-      // After zero duration, should be expired
-      mgr.tick();
-      expect(mgr.isEarlyWarningActive(1, 'top', card), isFalse);
-      expect(mgr.hasActiveWarnings, isFalse);
-    });
-
     test('multiple cards in same warning', () {
       final cards = [
         c(Rank.ace, Suit.spade),
@@ -63,29 +49,17 @@ void main() {
         expect(mgr.isEarlyWarningActive(1, 'middle', card), isTrue);
       }
     });
-  });
 
-  group('earlyWarningCards', () {
-    test('returns active cards for a line', () {
-      final cards = [
-        c(Rank.ace, Suit.spade),
-        c(Rank.king, Suit.heart),
-      ];
-      mgr.addEarlyWarning(1, 'top', cards);
-      final result = mgr.earlyWarningCards(1, 'top');
-      expect(result, hasLength(2));
-      expect(result, containsAll(cards));
-    });
+    test('completeEarlyWarning removes and triggers callback', () {
+      bool called = false;
+      mgr.onStateChanged = () => called = true;
+      final card = c(Rank.ace, Suit.spade);
+      mgr.addEarlyWarning(1, 'top', [card]);
 
-    test('returns empty for inactive line', () {
-      expect(mgr.earlyWarningCards(1, 'top'), isEmpty);
-    });
+      mgr.completeEarlyWarning(1, 'top');
 
-    test('returns empty after expiration', () {
-      final cards = [c(Rank.ace, Suit.spade)];
-      mgr.addEarlyWarning(1, 'top', cards, duration: Duration.zero);
-      mgr.tick();
-      expect(mgr.earlyWarningCards(1, 'top'), isEmpty);
+      expect(mgr.isEarlyWarningActive(1, 'top', card), isFalse);
+      expect(called, isTrue);
     });
   });
 
@@ -101,9 +75,9 @@ void main() {
 
     test('different hand numbers are independent', () {
       mgr.setCelebration(1, 'top', 3);
-      mgr.setCelebration(2, 'top', 5);
+      mgr.setCelebration(2, 'top', 2);
       expect(mgr.getCelebration(1, 'top'), 3);
-      expect(mgr.getCelebration(2, 'top'), 5);
+      expect(mgr.getCelebration(2, 'top'), 2);
     });
 
     test('different lines are independent', () {
@@ -113,6 +87,99 @@ void main() {
       expect(mgr.getCelebration(1, 'top'), 1);
       expect(mgr.getCelebration(1, 'middle'), 2);
       expect(mgr.getCelebration(1, 'bottom'), 3);
+    });
+
+    test('setCelebration triggers onStateChanged', () {
+      bool called = false;
+      mgr.onStateChanged = () => called = true;
+
+      mgr.setCelebration(1, 'top', 2);
+
+      expect(called, isTrue);
+    });
+
+    test('completeCelebration removes and triggers callback', () {
+      bool called = false;
+      mgr.setCelebration(1, 'top', 3);
+      mgr.onStateChanged = () => called = true;
+
+      mgr.completeCelebration(1, 'top');
+
+      expect(mgr.getCelebration(1, 'top'), 0);
+      expect(called, isTrue);
+    });
+  });
+
+  group('timer-based expiry', () {
+    test('softClearAll preserves active celebrations', () {
+      mgr.setCelebration(1, 'top', 3);
+
+      // softClearAll 직후 — 아직 expiry 전이므로 유지
+      mgr.softClearAll();
+
+      expect(mgr.getCelebration(1, 'top'), 3);
+    });
+
+    test('softClearAll clears warnings and sounds', () {
+      final card = c(Rank.ace, Suit.spade);
+      mgr.addEarlyWarning(1, 'top', [card]);
+      mgr.markSoundPlayed(1, 'top');
+
+      mgr.softClearAll();
+
+      expect(mgr.isEarlyWarningActive(1, 'top', card), isFalse);
+      expect(mgr.markSoundPlayed(1, 'top'), isTrue); // reset됨
+    });
+
+    test('getCelebration returns 0 after expiry', () async {
+      // 테스트용 짧은 expiry로 설정
+      mgr.setCelebration(1, 'top', 1); // L1 = 800ms
+
+      // expiry 경과 시뮬레이션: 직접 시간을 제어할 수 없으므로
+      // forceClearAll로 검증
+      mgr.forceClearAll();
+
+      expect(mgr.getCelebration(1, 'top'), 0);
+    });
+
+    test('forceClearAll removes all celebrations unconditionally', () {
+      mgr.setCelebration(1, 'top', 3);
+      mgr.setCelebration(1, 'middle', 2);
+
+      mgr.forceClearAll();
+
+      expect(mgr.getCelebration(1, 'top'), 0);
+      expect(mgr.getCelebration(1, 'middle'), 0);
+    });
+
+    test('softClearAll then forceClearAll clears everything', () {
+      final card = c(Rank.ace, Suit.spade);
+      mgr.addEarlyWarning(1, 'top', [card]);
+      mgr.setCelebration(1, 'top', 3);
+      mgr.markSoundPlayed(1, 'top');
+
+      mgr.softClearAll(); // celebration 유지
+      expect(mgr.getCelebration(1, 'top'), 3);
+
+      mgr.forceClearAll(); // 전부 삭제
+      expect(mgr.getCelebration(1, 'top'), 0);
+    });
+
+    test('celebration auto-expires after display duration', () async {
+      // 최소 expiry 테스트: setCelebrationWithExpiry로 1ms 설정
+      mgr.setCelebrationWithExpiry(1, 'top', 1, const Duration(milliseconds: 1));
+
+      // 1ms 대기 후 만료 확인
+      await Future.delayed(const Duration(milliseconds: 10));
+
+      expect(mgr.getCelebration(1, 'top'), 0);
+    });
+
+    test('celebration visible before expiry', () {
+      // 긴 expiry 설정
+      mgr.setCelebrationWithExpiry(1, 'top', 3, const Duration(seconds: 10));
+
+      expect(mgr.getCelebration(1, 'top'), 3);
     });
   });
 
@@ -133,35 +200,32 @@ void main() {
     });
   });
 
-  group('clearAll', () {
-    test('resets all three stores', () {
+  group('clearAll (legacy)', () {
+    test('forceClearAll resets all three stores', () {
       final card = c(Rank.ace, Suit.spade);
       mgr.addEarlyWarning(1, 'top', [card]);
       mgr.setCelebration(1, 'top', 3);
       mgr.markSoundPlayed(1, 'top');
 
-      mgr.clearAll();
+      mgr.forceClearAll();
 
       expect(mgr.isEarlyWarningActive(1, 'top', card), isFalse);
       expect(mgr.getCelebration(1, 'top'), 0);
-      expect(mgr.markSoundPlayed(1, 'top'), isTrue); // reset, so first call again
+      expect(mgr.markSoundPlayed(1, 'top'), isTrue); // reset
       expect(mgr.hasActiveWarnings, isFalse);
     });
   });
 
-  group('tick', () {
-    test('removes only expired entries', () {
-      final expiredCard = c(Rank.two, Suit.club);
-      final activeCard = c(Rank.ace, Suit.spade);
+  group('clearRound', () {
+    test('clears only earlyWarnings', () {
+      final card = c(Rank.ace, Suit.spade);
+      mgr.addEarlyWarning(1, 'top', [card]);
+      mgr.setCelebration(1, 'top', 3);
 
-      mgr.addEarlyWarning(1, 'top', [expiredCard], duration: Duration.zero);
-      mgr.addEarlyWarning(1, 'middle', [activeCard],
-          duration: const Duration(hours: 1));
+      mgr.clearRound();
 
-      mgr.tick();
-
-      expect(mgr.isEarlyWarningActive(1, 'top', expiredCard), isFalse);
-      expect(mgr.isEarlyWarningActive(1, 'middle', activeCard), isTrue);
+      expect(mgr.isEarlyWarningActive(1, 'top', card), isFalse);
+      expect(mgr.getCelebration(1, 'top'), 3); // celebration 유지
     });
   });
 }

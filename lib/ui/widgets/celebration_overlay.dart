@@ -3,12 +3,10 @@ import 'package:flutter/material.dart';
 
 class CelebrationOverlay extends StatefulWidget {
   final int level; // 2 또는 3
-  final VoidCallback? onComplete;
 
   const CelebrationOverlay({
     super.key,
     required this.level,
-    this.onComplete,
   });
 
   @override
@@ -39,9 +37,7 @@ class _CelebrationOverlayState extends State<CelebrationOverlay>
       setState(() {});
     });
 
-    _controller.forward().then((_) {
-      widget.onComplete?.call();
-    });
+    _controller.forward();
   }
 
   List<_Ring> _buildRings(bool isLevel3) {

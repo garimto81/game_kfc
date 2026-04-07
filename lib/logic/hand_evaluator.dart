@@ -165,28 +165,33 @@ bool _isExcitingResult(HandResult r, bool isTop) {
   return false;
 }
 
-/// 라인 완성 시 축하 레벨 반환 (0=없음, 1=shimmer, 2=burst, 3=explosion)
+/// 라인 완성 시 축하 레벨 반환 (0=없음, 1=bounce, 2=burst, 3=explosion+screenShake)
+/// 로열티 포인트 기반: L1=낮은 보너스, L2=중간, L3=대박
 int getCelebrationLevel(List<Card> cards, String lineName) {
   final maxCards = lineName == 'top' ? 3 : 5;
   if (cards.length < maxCards) return 0;
 
   final result = evaluateHand(cards);
 
-  // Level 3: Quads+ (모든 라인)
-  if (result.handType.value >= HandType.fourOfAKind.value) return 3;
-
   if (lineName == 'top') {
-    // Top: Trips = Level 2, QQ+ Pair = Level 1
-    if (result.handType == HandType.threeOfAKind) return 2;
-    if (result.handType == HandType.onePair &&
-        result.kickers.isNotEmpty &&
-        result.kickers[0] >= 12) {
-      return 1;
+    // Top (3장): Trips=L3(10~22), QQ~AA=L2(7~9,FL), 66~JJ=L1(1~6)
+    if (result.handType == HandType.threeOfAKind) return 3;
+    if (result.handType == HandType.onePair && result.kickers.isNotEmpty) {
+      final pairRank = result.kickers[0];
+      if (pairRank >= 12) return 2; // QQ+ (로열티 7+, FL 진입)
+      if (pairRank >= 6) return 1;  // 66~JJ (로열티 1~6)
     }
     return 0;
+  } else if (lineName == 'mid') {
+    // Mid (5장): Quads+=L3(20+), FH=L2(12), Trips~Flush=L1(2~8)
+    if (result.handType.value >= HandType.fourOfAKind.value) return 3;
+    if (result.handType == HandType.fullHouse) return 2;
+    if (result.handType.value >= HandType.threeOfAKind.value) return 1;
+    return 0;
   } else {
-    // Mid/Bottom: Full House = Level 2, Flush/Straight = Level 1
-    if (result.handType.value >= HandType.fullHouse.value) return 2;
+    // Bottom (5장): SF+=L3(15+), Quads=L2(10), Str8~FH=L1(2~6)
+    if (result.handType.value >= HandType.straightFlush.value) return 3;
+    if (result.handType == HandType.fourOfAKind) return 2;
     if (result.handType.value >= HandType.straight.value) return 1;
     return 0;
   }
@@ -232,6 +237,29 @@ bool isImpactPlacement(
   final sameRank = lineCards.where((c) => c.rank == card.rank).length;
   if (sameRank >= 2) return true;
   if (isTop && sameRank >= 1 && card.rank.value >= 12) return true;
+
+  // 5장 라인 미완성: Flush/Straight 패턴 감지
+  if (!isTop && simulated.length >= 3) {
+    // Flush: 동일 suit 4장+
+    final suitCount = simulated.where((c) => c.suit == card.suit).length;
+    if (suitCount >= 4) return true;
+
+    // Straight: 연속 rank 3장+
+    final values = simulated.map((c) => c.rank.value).toSet().toList()..sort();
+    // Ace-low 고려: Ace가 있으면 1도 추가
+    if (values.contains(14)) values.insert(0, 1);
+    int maxConsec = 1;
+    int curConsec = 1;
+    for (int i = 1; i < values.length; i++) {
+      if (values[i] == values[i - 1] + 1) {
+        curConsec++;
+        if (curConsec > maxConsec) maxConsec = curConsec;
+      } else if (values[i] != values[i - 1]) {
+        curConsec = 1;
+      }
+    }
+    if (maxConsec >= 3) return true;
+  }
 
   return false;
 }

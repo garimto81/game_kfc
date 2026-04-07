@@ -19,9 +19,9 @@ export class ScreenshotManager {
   private captures: CaptureRecord[] = [];
   private baseDir: string;
 
-  constructor(testId: string) {
+  constructor(runId: string, testId: string) {
     this.testId = testId;
-    this.baseDir = path.join(__dirname, '..', 'reports', 'screenshots', testId);
+    this.baseDir = path.join(__dirname, '..', 'reports', 'screenshots', runId, testId);
     fs.mkdirSync(this.baseDir, { recursive: true });
   }
 

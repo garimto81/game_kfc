@@ -12,6 +12,26 @@ dart run build_runner build --delete-conflicting-outputs
 flutter build web
 ```
 
+## 서버 배포 (Docker)
+
+이 프로젝트는 Docker 기반으로 실행된다. 코드 수정 후 반드시 이미지를 리빌드해야 반영된다.
+
+```bash
+# 서버 코드 수정 시 (server/ 하위)
+docker-compose up -d --build game-server
+
+# 웹 클라이언트 수정 시 (flutter build web 후)
+docker-compose up -d --build web
+
+# 전체 리빌드
+docker-compose up -d --build
+
+# 서버 로그 확인
+docker-compose logs game-server --tail 50 -f
+```
+
+> **주의**: `docker-compose restart`는 이미지를 리빌드하지 않는다. 반드시 `--build` 옵션 사용.
+
 ## 재빌드 트리거 조건
 
 아래 파일이 수정되면 반드시 `build_runner`를 실행한다:

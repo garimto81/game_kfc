@@ -1,0 +1,11 @@
+[
+  {
+    "direction": "received",
+    "timestamp": 1774857764088,
+    "type": "roomList",
+    "payload": {
+      "rooms": []
+    },
+    "raw": "{\"type\":\"roomList\",\"payload\":{\"rooms\":[]}}"
+  }
+]

@@ -22,6 +22,8 @@ class BoardWidget extends StatefulWidget {
   final void Function(ofc.Card card, String line)? onUndoCard;
   final bool hideCards;
   final bool showFoulAnimation;
+  /// L3/Foul 시 화면 전체 흔들림 요청 콜백
+  final VoidCallback? onScreenShake;
 
   const BoardWidget({
     super.key,
@@ -34,6 +36,7 @@ class BoardWidget extends StatefulWidget {
     this.onUndoCard,
     this.hideCards = false,
     this.showFoulAnimation = false,
+    this.onScreenShake,
   });
 
   @override
@@ -171,13 +174,7 @@ class _BoardWidgetState extends State<BoardWidget> {
           ],
         );
 
-        // Foul 연출: shake + scatter + 빨간 오버레이 + FOUL! 텍스트
-        if (widget.showFoulAnimation) {
-          boardContent = boardContent
-              .animate(onPlay: (c) => c.forward())
-              .shake(hz: 8, offset: const Offset(6, 3), duration: 600.ms);
-        }
-
+        // Foul 연출: scatter + 빨간 오버레이 + FOUL! 텍스트 (shake는 screen 레벨에서 처리)
         return Stack(
           clipBehavior: Clip.none,
           children: [
@@ -264,9 +261,7 @@ class _BoardWidgetState extends State<BoardWidget> {
       celebLevel = 0;
     } else if (widget.effectManager != null) {
       celebLevel = widget.effectManager!.getCelebration(widget.handNumber, lineName);
-      if (celebLevel == 0) {
-        celebLevel = getCelebrationLevel(cards, lineName);
-      }
+      if (celebLevel > 0) debugPrint('[EFFECT] buildLine: h=${widget.handNumber} line=$lineName celeb=$celebLevel cards=${cards.length}/$maxCards');
     } else {
       celebLevel = getCelebrationLevel(cards, lineName);
     }
@@ -303,12 +298,6 @@ class _BoardWidgetState extends State<BoardWidget> {
 
           // Foul scatter: 카드에 랜덤 오프셋 + 회전 적용
           Widget slotWidget = LineSlotWidget(
-            // 임팩트 시 key 변경 → 리빌드 + 애니메이션 재생
-            key: isImpact
-                ? ValueKey('impact_${lineName}_$i')
-                : celebLevel > 0
-                    ? ValueKey('celeb_${lineName}_$i')
-                    : null,
             card: i < cards.length ? cards[i] : null,
             lineName: lineName,
             canAccept: !isFoul && canAccept && i >= cards.length,
@@ -319,6 +308,15 @@ class _BoardWidgetState extends State<BoardWidget> {
             celebLevel: (!isFoul && !isImpact && i < cards.length) ? celebLevel : 0,
             onUndoTap: !isFoul && isUndoable
                 ? () => widget.onUndoCard?.call(cards[i], lineName)
+                : null,
+            onEffectComplete: (isImpact || celebLevel > 0) && widget.effectManager != null
+                ? () {
+                    if (isImpact) {
+                      widget.effectManager!.completeEarlyWarning(widget.handNumber, lineName);
+                    } else if (celebLevel > 0) {
+                      widget.effectManager!.completeCelebration(widget.handNumber, lineName);
+                    }
+                  }
                 : null,
             faceDown: widget.hideCards || isFoul,
           );
@@ -355,43 +353,21 @@ class _BoardWidgetState extends State<BoardWidget> {
       ],
     );
 
-    // Level 1 (Shimmer): 미묘한 shimmer만
-    if (celebLevel == 1) {
-      lineWidget = lineWidget
-          .animate(onPlay: (c) => c.forward())
-          .shimmer(duration: 800.ms, color: Colors.amber.withValues(alpha: 0.4));
+    if (celebLevel > 0) {
+      debugPrint('[EFFECT] render: line=$lineName level=$celebLevel');
+      // L3: 화면 전체 흔들림 트리거
+      if (celebLevel >= 3) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          widget.onScreenShake?.call();
+        });
+      }
     }
-    // Level 2 (Burst): 강한 scale bounce + amber glow 확산
-    // Level 3 (Explosion): 골든 flash + 큰 scale bounce + shimmer
+    // Level 2+: 파티클 오버레이 (카드별 glow+bounce는 LineSlotWidget 내부에서 처리)
     if (celebLevel >= 2) {
       lineWidget = Stack(
         clipBehavior: Clip.none,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.amber.withValues(
-                      alpha: celebLevel == 3 ? 0.8 : 0.4),
-                  blurRadius: celebLevel == 3 ? 24 : 14,
-                  spreadRadius: celebLevel == 3 ? 6 : 3,
-                ),
-              ],
-            ),
-            child: lineWidget,
-          )
-              .animate(onPlay: (c) => c.forward())
-              .scale(
-                begin: Offset(celebLevel == 3 ? 1.12 : 1.08,
-                    celebLevel == 3 ? 1.12 : 1.08),
-                end: const Offset(1.0, 1.0),
-                duration: 500.ms,
-                curve: Curves.elasticOut,
-              )
-              .shimmer(
-                duration: 800.ms,
-                color: Colors.amber.withValues(alpha: 0.5),
-              ),
+          lineWidget,
           Positioned.fill(
             child: IgnorePointer(
               child: CelebrationOverlay(level: celebLevel),

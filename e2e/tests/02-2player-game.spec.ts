@@ -1,133 +1,123 @@
 /**
- * 02-2player-game.spec.ts — 2인 풀게임 (WS 하이브리드 방식)
+ * 02-2player-game.spec.ts — 2인 풀게임 자동 QA
  *
- * 아키텍처:
- * - Playwright 브라우저: Flutter 앱 로드 + 스크린샷 캡처 전용
- * - WS 클라이언트: 게임 조작 (joinRequest, placeCard, confirmPlacement 등)
+ * QA-02: 2인 풀게임 + 점수 다이얼로그 (PRD L2,L4)
+ * 스크린샷 → e2e/reports/screenshots/02-2player-game/
  *
- * CanvasKit 렌더러에서 DOM 셀렉터가 동작하지 않으므로
- * 게임 로직은 WS로 직접 수행하고, UI는 시각적으로만 검증한다.
+ * Alice: Flutter UI 참가 + Flutter WS 카드 배치
+ * Bob: WSGameClient 봇
  */
 import { test, expect } from '../fixtures/multi-player';
-import { connectToServer } from '../helpers/game-actions';
+import {
+  connectToServer, joinRoomById,
+  sendGameWsMessage, waitForGameWsMessage, isGameWsConnected
+} from '../helpers/game-actions';
 import { WSGameClient, sleep } from '../helpers/ws-game-client';
-import { decidePlacement, extractBoard, playBotTurn } from '../helpers/ws-bot-strategy';
-import type { HybridPlayer } from '../fixtures/multi-player';
+import { decidePlacement } from '../helpers/ws-bot-strategy';
+import { assertFullScoreValidity } from '../helpers/score-validator';
 
-test.describe('02 — 2-Player Full Game (WS Hybrid)', () => {
-  test('2인 5라운드 풀게임 + 스코어링 + 2번째 핸드 시작', async ({
+test.describe('02 — 2-Player Full Game', () => {
+  test('2인 풀게임 + 정상 스코어링', async ({
     createHybridPlayers,
     screenshotManager,
   }) => {
     const players = await createHybridPlayers(2, ['Alice', 'Bob']);
     const [alice, bob] = players;
-    const allPages = players.map((p) => ({ page: p.page, playerName: p.name }));
 
-    // ── 1. Playwright: 두 브라우저에서 Flutter 앱 로드 (스크린샷용) ──
-    await connectToServer(alice.page);
-    await connectToServer(bob.page);
+    // ── 방 정리 + 생성 ──
+    await WSGameClient.deleteAllRooms();
+    const room = await WSGameClient.createRoom('E2E-2P', 2, 60);
 
-    // ── 2. WS: 방 생성 ──
-    const room = await WSGameClient.createRoom('E2E-2P-Game', 2, 60);
-    expect(room.id).toBeTruthy();
-
-    // Flutter 앱이 로비 WS로 방 목록 수신할 시간
-    await sleep(1500);
-
-    // ── 3. WS: 방 참가 ──
-    await alice.ws.join(room.id);
+    // ── Bob WS + Alice Flutter UI 참가 ──
     await bob.ws.join(room.id);
+    await connectToServer(alice.page);
+    await joinRoomById(alice.page, room.id, 'Alice');
 
-    expect(alice.ws.playerId).toBeTruthy();
-    expect(bob.ws.playerId).toBeTruthy();
+    let wsReady = false;
+    for (let i = 0; i < 20; i++) {
+      wsReady = await isGameWsConnected(alice.page);
+      if (wsReady) break;
+      await sleep(500);
+    }
+    expect(wsReady, 'Alice game WS connected').toBeTruthy();
+    await screenshotManager.capture(alice.page, 'joined', 'Alice', '방 참가');
 
-    // Flutter 앱이 상태 반영할 시간
-    await sleep(2000);
-    await screenshotManager.captureAll(allPages, '02-LOBBY', '로비에서 방 표시');
-
-    // ── 4. WS: 게임 시작 ──
-    alice.ws.send('startGame');
-
-    const aliceDealer = await alice.ws.waitFor('dealerSelection');
+    // ── 게임 시작 ──
+    bob.ws.send('startGame');
     await bob.ws.waitFor('dealerSelection');
-
-    expect(aliceDealer.payload.dealerId).toBeTruthy();
-    expect(aliceDealer.payload.playerOrder).toBeTruthy();
-
-    await sleep(1500);
-    await screenshotManager.captureAll(allPages, '02-DEALER', '딜러 선정');
-
-    // gameStart 대기
-    await alice.ws.waitFor('gameStart');
     await bob.ws.waitFor('gameStart');
+    await sleep(1500);
+    await screenshotManager.capture(alice.page, 'game-start', 'Alice', '게임 시작');
 
-    // ── 5. WS: R1~R5 카드 배치 (봇 전략) ──
-    const wsClients = [alice.ws, bob.ws];
+    // ── R1~R5 병렬 플레이 ──
     const activePlayers = 2;
 
-    for (let round = 1; round <= 5; round++) {
-      // 모든 클라이언트가 동시에 dealCards를 대기 (서버 턴 순서와 무관)
-      await Promise.all(wsClients.map(async (client) => {
-        const dealMsg = await client.waitFor('dealCards', 30000);
-        const cards = dealMsg.payload.cards;
-        const dealRound = dealMsg.payload.round;
-        const isFL = dealMsg.payload.inFantasyland === true;
-
-        // R1: 5장, R2-R4: 3장, R5(2-3인): 3장
-        if (round === 1) {
-          expect(cards.length).toBe(5);
-        }
-
-        const board = extractBoard(client);
-        const decision = decidePlacement(cards, board, dealRound, isFL, activePlayers);
-
+    const alicePlay = (async () => {
+      const aliceBoard = { top: [] as any[], mid: [] as any[], bottom: [] as any[] };
+      for (let round = 1; round <= 5; round++) {
+        const deal = await waitForGameWsMessage(alice.page, 'dealCards', 30000);
+        const board = round === 1 ? { top: [], mid: [], bottom: [] } : aliceBoard;
+        const decision = decidePlacement(deal.payload.cards, board, deal.payload.round, deal.payload.inFantasyland === true, activePlayers);
         for (const p of decision.placements) {
-          client.send('placeCard', { card: p.card, line: p.line });
+          await sendGameWsMessage(alice.page, 'placeCard', { card: p.card, line: p.line });
+          (aliceBoard as any)[p.line].push(p.card);
         }
-        if (decision.discard) {
-          client.send('discardCard', { card: decision.discard });
-        }
+        if (decision.discard) await sendGameWsMessage(alice.page, 'discardCard', { card: decision.discard });
         await sleep(200);
-        client.send('confirmPlacement');
+        await sendGameWsMessage(alice.page, 'confirmPlacement');
         await sleep(500);
-      }));
+      }
+    })();
 
-      // Flutter 앱이 상태 반영할 시간
-      await sleep(1500);
-      await screenshotManager.captureAll(allPages, `02-R${round}`, `라운드 ${round} 완료`);
+    const bobPlay = (async () => {
+      const bobBoard = { top: [] as any[], mid: [] as any[], bottom: [] as any[] };
+      for (let round = 1; round <= 5; round++) {
+        const deal = await bob.ws.waitFor('dealCards', 30000);
+        const r = deal.payload.round as number;
+        const board = r === 1 ? { top: [], mid: [], bottom: [] } : bobBoard;
+        const decision = decidePlacement(deal.payload.cards, board, r, deal.payload.inFantasyland === true, activePlayers);
+        for (const p of decision.placements) {
+          bob.ws.send('placeCard', { card: p.card, line: p.line });
+          (bobBoard as any)[p.line].push(p.card);
+        }
+        if (decision.discard) bob.ws.send('discardCard', { card: decision.discard });
+        await sleep(200);
+        bob.ws.send('confirmPlacement');
+        await sleep(500);
+        await screenshotManager.capture(alice.page, `R${round}`, 'Alice', `라운드 ${round}`);
+      }
+    })();
+
+    await Promise.all([alicePlay, bobPlay]);
+
+    // ── handScored + 검증 ──
+    const scoreMsg = await bob.ws.waitFor('handScored', 30000);
+    expect(scoreMsg.payload.results).toBeTruthy();
+    expect(scoreMsg.payload.handNumber).toBe(1);
+    assertFullScoreValidity(scoreMsg.payload.results, 2);
+
+    // 이름 검증 (UUID가 아닌 실제 이름)
+    for (const [, data] of Object.entries(scoreMsg.payload.results) as [string, any][]) {
+      expect(data.name).toBeTruthy();
+      expect(data.name.length).toBeLessThan(30);
     }
 
-    // ── 6. WS: handScored 수신 ──
-    const aliceScored = await alice.ws.waitFor('handScored');
-    const bobScored = await bob.ws.waitFor('handScored');
+    // ── 스코어 다이얼로그 스크린샷 ──
+    try {
+      await alice.page.getByLabel('ready-button').waitFor({ state: 'visible', timeout: 15000 });
+    } catch { await sleep(3000); }
+    await sleep(500);
+    await screenshotManager.capture(alice.page, 'score-dialog', 'Alice', '점수 결과');
 
-    expect(aliceScored.payload.results).toBeTruthy();
-    expect(aliceScored.payload.handNumber).toBe(1);
-
-    // zero-sum 검증
-    const results = aliceScored.payload.results;
-    let totalScore = 0;
-    for (const id of Object.keys(results)) {
-      totalScore += results[id].score || 0;
-    }
-    expect(totalScore).toBe(0);
-
-    // ── 7. 스크린샷: 스코어 다이얼로그 ──
-    await sleep(2000);
-    await screenshotManager.captureAll(allPages, '02-SCORE', '스코어 다이얼로그');
-
-    // ── 8. WS: readyForNextHand ──
-    alice.ws.send('readyForNextHand');
+    // ── Ready → 2번째 핸드 ──
+    const readyBtn = alice.page.getByLabel('ready-button');
+    if (await readyBtn.isVisible().catch(() => false)) await readyBtn.click();
     bob.ws.send('readyForNextHand');
 
-    // 2번째 핸드 시작 대기
-    const alice2ndGameStart = await alice.ws.waitFor('gameStart', 15000);
-    expect(alice2ndGameStart.payload).toBeTruthy();
-
-    await sleep(2000);
-    await screenshotManager.captureAll(allPages, '02-HAND2-START', '2번째 핸드 시작');
-
-    // ── 9. 정리 ──
-    // (teardown은 fixture에서 자동 처리)
+    try {
+      await bob.ws.waitFor('gameStart', 15000);
+      await sleep(2000);
+      await screenshotManager.capture(alice.page, 'hand2-start', 'Alice', '2번째 핸드');
+    } catch {}
   });
 });

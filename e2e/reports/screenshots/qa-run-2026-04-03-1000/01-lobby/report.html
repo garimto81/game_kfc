@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>E2E Screenshot Report — 01-lobby</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }
+    h1 { color: #00d2ff; }
+    .checkpoint { margin: 30px 0; border: 1px solid #333; border-radius: 8px; padding: 16px; background: #16213e; }
+    .checkpoint h2 { color: #e94560; margin-top: 0; }
+    .checkpoint .desc { color: #aaa; font-size: 0.9em; margin-bottom: 12px; }
+    .screenshots { display: flex; gap: 12px; overflow-x: auto; }
+    .screenshot { flex: 0 0 auto; text-align: center; }
+    .screenshot img { max-width: 480px; border: 2px solid #333; border-radius: 4px; }
+    .screenshot .name { font-weight: bold; color: #00d2ff; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>E2E Screenshot Report: 01-lobby</h1>
+  <p>Total checkpoints: 6 | Total screenshots: 9</p>
+  
+  <div class="checkpoint">
+    <h2>01-LOBBY-EMPTY</h2>
+    <div class="desc">빈 로비 화면</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-LOBBY-EMPTY-Host.png" alt="01-LOBBY-EMPTY - Host" />
+        <div class="name">Host</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>01-CREATE</h2>
+    <div class="desc">방 생성 후 로비</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-CREATE-Host.png" alt="01-CREATE - Host" />
+        <div class="name">Host</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>01-ROOM</h2>
+    <div class="desc">방 카드 확인</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-ROOM-Host.png" alt="01-ROOM - Host" />
+        <div class="name">Host</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>01-JOIN</h2>
+    <div class="desc">Guest 로비 진입</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-JOIN-Host.png" alt="01-JOIN - Host" />
+        <div class="name">Host</div>
+      </div>
+      <div class="screenshot">
+        <img src="01-JOIN-Guest.png" alt="01-JOIN - Guest" />
+        <div class="name">Guest</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>01-WAITING</h2>
+    <div class="desc">대기 화면</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-WAITING-Host.png" alt="01-WAITING - Host" />
+        <div class="name">Host</div>
+      </div>
+      <div class="screenshot">
+        <img src="01-WAITING-Guest.png" alt="01-WAITING - Guest" />
+        <div class="name">Guest</div>
+      </div>
+    </div>
+  </div>
+  <div class="checkpoint">
+    <h2>01-CLEANUP</h2>
+    <div class="desc">방 삭제 후 로비</div>
+    <div class="screenshots">
+      
+      <div class="screenshot">
+        <img src="01-CLEANUP-Host.png" alt="01-CLEANUP - Host" />
+        <div class="name">Host</div>
+      </div>
+      <div class="screenshot">
+        <img src="01-CLEANUP-Guest.png" alt="01-CLEANUP - Guest" />
+        <div class="name">Guest</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

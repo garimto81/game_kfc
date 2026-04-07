@@ -28,5 +28,35 @@
     "botB_fl_entry": 0,
     "botB_avg_score": -1.82,
     "win_rate_A": 56.2
+  },
+  {
+    "version": "v0-smart-bot",
+    "date": "2026-03-31",
+    "opponent": "simple-bot",
+    "hands": 500,
+    "botA_foul_rate": 10,
+    "botA_avg_royalty": 0.6,
+    "botA_fl_entry": 0.2,
+    "botA_avg_score": 4.1,
+    "botB_foul_rate": 42,
+    "botB_avg_royalty": 0.09,
+    "botB_fl_entry": 0,
+    "botB_avg_score": -2.05,
+    "win_rate_A": 61.6
+  },
+  {
+    "version": "v0-smart-bot",
+    "date": "2026-03-31",
+    "opponent": "simple-bot",
+    "hands": 500,
+    "botA_foul_rate": 11.2,
+    "botA_avg_royalty": 0.68,
+    "botA_fl_entry": 1,
+    "botA_avg_score": 4.58,
+    "botB_foul_rate": 43.9,
+    "botB_avg_royalty": 0.08,
+    "botB_fl_entry": 0,
+    "botB_avg_score": -2.29,
+    "win_rate_A": 60.6
   }
 ]

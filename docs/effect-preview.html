@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OFC Effect Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 20px; color: #ffd700; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 24px; font-size: 13px; }
+
+  .section { margin-bottom: 32px; background: #16213e; border-radius: 12px; padding: 16px; }
+  .section-title { font-size: 15px; font-weight: bold; color: #ffd700; margin-bottom: 12px; }
+  .section-desc { font-size: 12px; color: #aaa; margin-bottom: 12px; }
+
+  /* 보드 레이아웃 */
+  .board { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .line { display: flex; gap: 4px; align-items: center; }
+  .line-label { width: 48px; font-size: 11px; color: #888; text-align: right; padding-right: 8px; }
+
+  /* 카드 */
+  .card {
+    width: 48px; height: 64px;
+    border-radius: 6px;
+    background: #fff;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-weight: bold; font-size: 14px;
+    position: relative;
+    transition: all 0.3s;
+  }
+  .card.empty { background: #2a2a4a; border: 1px dashed #444; }
+  .card .rank { font-size: 16px; line-height: 1; }
+  .card .suit { font-size: 14px; line-height: 1; margin-top: 2px; }
+  .suit-red { color: #e74c3c; }
+  .suit-black { color: #333; }
+
+  /* 이펙트: Early Warning */
+  .card.early-warning {
+    animation: earlyWarning 1.5s ease-out forwards;
+    box-shadow: 0 0 14px 4px rgba(255, 193, 7, 0.7);
+  }
+  @keyframes earlyWarning {
+    0% { transform: scale(1.6); }
+    15% { transform: scale(0.9) translateX(3px); }
+    20% { transform: scale(1.05) translateX(-3px); }
+    25% { transform: scale(0.97) translateX(2px); }
+    30% { transform: scale(1.02) translateX(-2px); }
+    35% { transform: scale(1.0) translateX(0); }
+    40% { background: linear-gradient(90deg, #fff 0%, #ffd700 50%, #fff 100%); background-size: 200%; }
+    60% { background-position: 100%; }
+    80% { background: #fff; }
+    100% { transform: scale(1.0); box-shadow: none; }
+  }
+
+  /* 이펙트: Celebration shimmer (L1) */
+  .line-celeb-1 .card:not(.empty) {
+    animation: shimmerL1 0.8s ease-out;
+  }
+  @keyframes shimmerL1 {
+    0% { background: #fff; }
+    30% { background: linear-gradient(90deg, #fff, #ffd700, #fff); background-size: 200%; }
+    60% { background-position: 100%; }
+    100% { background: #fff; }
+  }
+
+  /* 이펙트: Celebration glow+bounce (L2) */
+  .line-celeb-2 {
+    animation: glowBounceL2 0.8s ease-out;
+    box-shadow: 0 0 12px 2px rgba(255, 193, 7, 0.4);
+  }
+  .line-celeb-2 .card:not(.empty) {
+    animation: shimmerL2 0.8s ease-out;
+  }
+  @keyframes glowBounceL2 {
+    0% { transform: scale(1.1); box-shadow: 0 0 20px 4px rgba(255, 193, 7, 0.6); }
+    40% { transform: scale(0.97); }
+    60% { transform: scale(1.02); }
+    100% { transform: scale(1.0); box-shadow: 0 0 12px 2px rgba(255, 193, 7, 0.4); }
+  }
+  @keyframes shimmerL2 {
+    0% { background: #ffeaa7; }
+    50% { background: linear-gradient(90deg, #fff, #ffd700, #fff); background-size: 200%; }
+    100% { background: #fff; }
+  }
+
+  /* 이펙트: Celebration explosion (L3) */
+  .line-celeb-3 {
+    animation: glowBounceL3 1s ease-out;
+    box-shadow: 0 0 20px 4px rgba(255, 193, 7, 0.8);
+  }
+  .line-celeb-3 .card:not(.empty) {
+    animation: shimmerL3 1s ease-out;
+  }
+  @keyframes glowBounceL3 {
+    0% { transform: scale(1.15); box-shadow: 0 0 30px 8px rgba(255, 193, 7, 0.9); }
+    20% { transform: scale(0.95); }
+    40% { transform: scale(1.05); }
+    60% { transform: scale(0.98); }
+    100% { transform: scale(1.0); box-shadow: 0 0 20px 4px rgba(255, 193, 7, 0.8); }
+  }
+  @keyframes shimmerL3 {
+    0% { background: #ffd700; box-shadow: 0 0 10px rgba(255,193,7,0.8); }
+    30% { background: linear-gradient(90deg, #ffd700, #fff, #ffd700); background-size: 200%; }
+    60% { background-position: 100%; }
+    100% { background: #fff; }
+  }
+
+  /* Excited 핸드 카드 */
+  .card.excited {
+    box-shadow: 0 0 10px 2px rgba(255, 193, 7, 0.6);
+    animation: excitedPulse 1.2s ease-in-out infinite alternate;
+  }
+  @keyframes excitedPulse {
+    0% { box-shadow: 0 0 10px 2px rgba(255, 193, 7, 0.6); transform: translateX(0); }
+    25% { transform: translateX(1.5px); }
+    50% { box-shadow: 0 0 16px 4px rgba(255, 193, 7, 0.8); transform: translateX(-1.5px); }
+    75% { transform: translateX(1px); }
+    100% { box-shadow: 0 0 10px 2px rgba(255, 193, 7, 0.6); transform: translateX(0); }
+  }
+
+  /* Foul */
+  .board.foul-active { animation: foulShake 0.6s ease-out; }
+  .board.foul-active .card:not(.empty) { animation: foulScatter 0.5s ease-out forwards; }
+  @keyframes foulShake {
+    0%,100% { transform: translateX(0); }
+    10% { transform: translateX(-6px) translateY(3px); }
+    30% { transform: translateX(5px) translateY(-2px); }
+    50% { transform: translateX(-4px) translateY(2px); }
+    70% { transform: translateX(3px) translateY(-1px); }
+    90% { transform: translateX(-2px); }
+  }
+  @keyframes foulScatter {
+    to { transform: translate(var(--sx), var(--sy)) rotate(var(--sr)); opacity: 0.4; }
+  }
+
+  /* 버튼 */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; justify-content: center; }
+  .btn {
+    padding: 6px 14px; border: 1px solid #ffd700; background: transparent;
+    color: #ffd700; border-radius: 6px; cursor: pointer; font-size: 12px;
+    transition: all 0.2s;
+  }
+  .btn:hover { background: #ffd700; color: #1a1a2e; }
+  .btn.active { background: #ffd700; color: #1a1a2e; }
+
+  /* 시퀀스 타임라인 */
+  .timeline { display: flex; gap: 4px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .step { padding: 4px 8px; border-radius: 4px; font-size: 11px; background: #2a2a4a; color: #888; transition: all 0.3s; }
+  .step.active { background: #ffd700; color: #1a1a2e; font-weight: bold; }
+  .step.done { background: #27ae60; color: #fff; }
+  .arrow { color: #555; font-size: 14px; }
+
+  .hand-area { display: flex; gap: 6px; justify-content: center; margin: 8px 0; padding: 8px; background: #0f3460; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<h1>OFC Effect Preview</h1>
+<p class="subtitle">click buttons to preview each effect</p>
+
+<!-- Section 1: Celebration Levels -->
+<div class="section">
+  <div class="section-title">Celebration Effects (line completion)</div>
+  <div class="section-desc">Level 1: QQ+ / Straight / Flush &nbsp;|&nbsp; Level 2: Trips / Full House &nbsp;|&nbsp; Level 3: Quads+</div>
+
+  <div class="board" id="celeb-board">
+    <div class="line" id="celeb-top">
+      <span class="line-label">Top</span>
+      <div class="card"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card"><span class="rank">3</span><span class="suit suit-black">&clubs;</span></div>
+    </div>
+    <div class="line" id="celeb-mid">
+      <span class="line-label">Mid</span>
+      <div class="card"><span class="rank">A</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card"><span class="rank">A</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card"><span class="rank">A</span><span class="suit suit-red">&diams;</span></div>
+      <div class="card"><span class="rank">K</span><span class="suit suit-black">&clubs;</span></div>
+      <div class="card"><span class="rank">K</span><span class="suit suit-black">&spades;</span></div>
+    </div>
+    <div class="line" id="celeb-bottom">
+      <span class="line-label">Bottom</span>
+      <div class="card"><span class="rank">K</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card"><span class="rank">K</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card"><span class="rank">K</span><span class="suit suit-red">&diams;</span></div>
+      <div class="card"><span class="rank">K</span><span class="suit suit-black">&clubs;</span></div>
+      <div class="card"><span class="rank">2</span><span class="suit suit-black">&spades;</span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" onclick="playCeleb(1, 'celeb-top')">Level 1 - QQ+ (Top)</button>
+    <button class="btn" onclick="playCeleb(2, 'celeb-mid')">Level 2 - Full House (Mid)</button>
+    <button class="btn" onclick="playCeleb(3, 'celeb-bottom')">Level 3 - Quads (Bottom)</button>
+    <button class="btn" onclick="resetCeleb()">Reset</button>
+  </div>
+</div>
+
+<!-- Section 2: Early Warning -->
+<div class="section">
+  <div class="section-title">Early Warning (incomplete line pattern detected)</div>
+  <div class="section-desc">Trips forming / QQ+ pair / Flush 4+ / Straight 3+</div>
+
+  <div class="board" id="ew-board">
+    <div class="line">
+      <span class="line-label">Top</span>
+      <div class="card" id="ew-card1"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card" id="ew-card2"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card empty"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" onclick="playEarlyWarning()">Play Early Warning</button>
+    <button class="btn" onclick="resetEW()">Reset</button>
+  </div>
+</div>
+
+<!-- Section 3: Full Sequence -->
+<div class="section">
+  <div class="section-title">Full Sequence: QQ+ Completion</div>
+  <div class="section-desc">Excited hand card -> Place Q -> Early Warning -> Place 3 -> Celebration</div>
+
+  <div class="timeline" id="seq-timeline">
+    <span class="step" id="seq-s1">1. Excited</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step" id="seq-s2">2. Place Q&spades;</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step" id="seq-s3">3. Early Warning</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step" id="seq-s4">4. Place 3&clubs;</span>
+    <span class="arrow">&rarr;</span>
+    <span class="step" id="seq-s5">5. Celebration!</span>
+  </div>
+
+  <div class="hand-area" id="seq-hand">
+    <div class="card" id="seq-h1"><span class="rank">7</span><span class="suit suit-black">&clubs;</span></div>
+    <div class="card" id="seq-h2"><span class="rank">Q</span><span class="suit suit-black">&spades;</span></div>
+    <div class="card" id="seq-h3"><span class="rank">3</span><span class="suit suit-black">&clubs;</span></div>
+  </div>
+
+  <div class="board" id="seq-board">
+    <div class="line" id="seq-top">
+      <span class="line-label">Top</span>
+      <div class="card" id="seq-t0"><span class="rank">Q</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card empty" id="seq-t1"></div>
+      <div class="card empty" id="seq-t2"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" onclick="playSequence()">Play Full Sequence</button>
+    <button class="btn" onclick="resetSequence()">Reset</button>
+  </div>
+</div>
+
+<!-- Section 4: Foul -->
+<div class="section">
+  <div class="section-title">Foul Animation</div>
+  <div class="section-desc">Board complete but line strength order violated</div>
+
+  <div class="board" id="foul-board">
+    <div class="line">
+      <span class="line-label">Top</span>
+      <div class="card" style="--sx:20px;--sy:-15px;--sr:15deg"><span class="rank">A</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card" style="--sx:-25px;--sy:10px;--sr:-20deg"><span class="rank">A</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card" style="--sx:15px;--sy:20px;--sr:10deg"><span class="rank">A</span><span class="suit suit-red">&diams;</span></div>
+    </div>
+    <div class="line">
+      <span class="line-label">Mid</span>
+      <div class="card" style="--sx:-20px;--sy:-10px;--sr:-15deg"><span class="rank">2</span><span class="suit suit-black">&clubs;</span></div>
+      <div class="card" style="--sx:30px;--sy:5px;--sr:25deg"><span class="rank">3</span><span class="suit suit-red">&diams;</span></div>
+      <div class="card" style="--sx:-15px;--sy:15px;--sr:-10deg"><span class="rank">5</span><span class="suit suit-black">&spades;</span></div>
+      <div class="card" style="--sx:10px;--sy:-20px;--sr:20deg"><span class="rank">7</span><span class="suit suit-red">&hearts;</span></div>
+      <div class="card" style="--sx:-30px;--sy:10px;--sr:-25deg"><span class="rank">9</span><span class="suit suit-black">&clubs;</span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" onclick="playFoul()">Play Foul</button>
+    <button class="btn" onclick="resetFoul()">Reset</button>
+  </div>
+</div>
+
+<script>
+function playCeleb(level, lineId) {
+  resetCeleb();
+  const line = document.getElementById(lineId);
+  line.classList.add(`line-celeb-${level}`);
+}
+
+function resetCeleb() {
+  ['celeb-top','celeb-mid','celeb-bottom'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('line-celeb-1','line-celeb-2','line-celeb-3');
+    // force reflow
+    void el.offsetWidth;
+  });
+}
+
+function playEarlyWarning() {
+  resetEW();
+  setTimeout(() => {
+    document.getElementById('ew-card1').classList.add('early-warning');
+    document.getElementById('ew-card2').classList.add('early-warning');
+  }, 10);
+}
+
+function resetEW() {
+  document.getElementById('ew-card1').classList.remove('early-warning');
+  document.getElementById('ew-card2').classList.remove('early-warning');
+  void document.getElementById('ew-card1').offsetWidth;
+}
+
+function playFoul() {
+  resetFoul();
+  setTimeout(() => {
+    document.getElementById('foul-board').classList.add('foul-active');
+  }, 10);
+}
+
+function resetFoul() {
+  document.getElementById('foul-board').classList.remove('foul-active');
+  void document.getElementById('foul-board').offsetWidth;
+}
+
+// Full sequence
+let seqTimer = null;
+function playSequence() {
+  resetSequence();
+  const steps = ['seq-s1','seq-s2','seq-s3','seq-s4','seq-s5'];
+  let i = 0;
+
+  function nextStep() {
+    if (i >= steps.length) return;
+    // Mark previous as done
+    if (i > 0) document.getElementById(steps[i-1]).classList.replace('active','done');
+    document.getElementById(steps[i]).classList.add('active');
+
+    switch(i) {
+      case 0: // Excited
+        document.getElementById('seq-h2').classList.add('excited');
+        break;
+      case 1: // Place Q
+        document.getElementById('seq-h2').classList.remove('excited');
+        document.getElementById('seq-h2').style.display = 'none';
+        document.getElementById('seq-t1').innerHTML = '<span class="rank">Q</span><span class="suit suit-black">&spades;</span>';
+        document.getElementById('seq-t1').classList.remove('empty');
+        document.getElementById('seq-t1').classList.add('early-warning');
+        break;
+      case 2: // Early Warning visible
+        document.getElementById('seq-t0').classList.add('early-warning');
+        break;
+      case 3: // Place 3
+        document.getElementById('seq-h3').style.display = 'none';
+        document.getElementById('seq-t2').innerHTML = '<span class="rank">3</span><span class="suit suit-black">&clubs;</span>';
+        document.getElementById('seq-t2').classList.remove('empty');
+        // Remove early warning
+        document.getElementById('seq-t0').classList.remove('early-warning');
+        document.getElementById('seq-t1').classList.remove('early-warning');
+        break;
+      case 4: // Celebration
+        document.getElementById('seq-top').classList.add('line-celeb-1');
+        break;
+    }
+    i++;
+    if (i < steps.length) seqTimer = setTimeout(nextStep, 1800);
+  }
+  nextStep();
+}
+
+function resetSequence() {
+  if (seqTimer) clearTimeout(seqTimer);
+  ['seq-s1','seq-s2','seq-s3','seq-s4','seq-s5'].forEach(id => {
+    document.getElementById(id).classList.remove('active','done');
+  });
+  document.getElementById('seq-h2').style.display = '';
+  document.getElementById('seq-h2').classList.remove('excited');
+  document.getElementById('seq-h3').style.display = '';
+  document.getElementById('seq-t0').classList.remove('early-warning');
+  document.getElementById('seq-t1').innerHTML = '';
+  document.getElementById('seq-t1').classList.add('empty');
+  document.getElementById('seq-t1').classList.remove('early-warning');
+  document.getElementById('seq-t2').innerHTML = '';
+  document.getElementById('seq-t2').classList.add('empty');
+  document.getElementById('seq-top').classList.remove('line-celeb-1','line-celeb-2','line-celeb-3');
+  void document.getElementById('seq-board').offsetWidth;
+}
+</script>
+</body>
+</html>

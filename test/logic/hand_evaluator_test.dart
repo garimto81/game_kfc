@@ -231,4 +231,57 @@ void main() {
       expect(compareHands(h1, h2), 1);
     });
   });
+
+  group('isImpactPlacement - 확장 패턴', () {
+    test('미완성 Mid: 동일 suit 3장+새카드 = 4장 → Flush 감지', () {
+      final lineCards = [
+        c(Rank.two, Suit.heart),
+        c(Rank.seven, Suit.heart),
+        c(Rank.jack, Suit.heart),
+      ];
+      final card = c(Rank.king, Suit.heart);
+      expect(isImpactPlacement(card, 'mid', lineCards, 5), isTrue);
+    });
+
+    test('미완성 Mid: 동일 suit 2장만 → Flush 미감지', () {
+      final lineCards = [
+        c(Rank.two, Suit.heart),
+        c(Rank.seven, Suit.spade),
+      ];
+      final card = c(Rank.king, Suit.heart);
+      expect(isImpactPlacement(card, 'mid', lineCards, 5), isFalse);
+    });
+
+    test('미완성 Bottom: 연속 rank 3장 → Straight 감지', () {
+      final lineCards = [
+        c(Rank.five, Suit.heart),
+        c(Rank.six, Suit.spade),
+      ];
+      final card = c(Rank.seven, Suit.diamond);
+      expect(isImpactPlacement(card, 'bottom', lineCards, 5), isTrue);
+    });
+
+    test('미완성 Bottom: 비연속 rank → Straight 미감지', () {
+      final lineCards = [
+        c(Rank.five, Suit.heart),
+      ];
+      final card = c(Rank.seven, Suit.diamond);
+      expect(isImpactPlacement(card, 'bottom', lineCards, 5), isFalse);
+    });
+
+    test('기존 트립 감지 유지', () {
+      final lineCards = [
+        c(Rank.ace, Suit.spade),
+        c(Rank.ace, Suit.heart),
+      ];
+      final card = c(Rank.ace, Suit.diamond);
+      expect(isImpactPlacement(card, 'mid', lineCards, 5), isTrue);
+    });
+
+    test('기존 Top QQ+ 감지 유지', () {
+      final lineCards = [c(Rank.queen, Suit.spade)];
+      final card = c(Rank.queen, Suit.heart);
+      expect(isImpactPlacement(card, 'top', lineCards, 3), isTrue);
+    });
+  });
 }

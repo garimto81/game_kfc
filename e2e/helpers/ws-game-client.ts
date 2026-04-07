@@ -61,6 +61,19 @@ export class WSGameClient {
     return res.json();
   }
 
+  /**
+   * REST API로 모든 방 삭제 (테스트 정리용)
+   */
+  static async deleteAllRooms(): Promise<number> {
+    const rooms = await WSGameClient.listRooms();
+    let deleted = 0;
+    for (const room of rooms) {
+      await fetch(`${BASE_URL}/api/rooms/${room.id}`, { method: 'DELETE' }).catch(() => {});
+      deleted++;
+    }
+    return deleted;
+  }
+
   // ============================================================
   // WS 연결 + 게임 참가
   // ============================================================

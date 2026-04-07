@@ -91,7 +91,7 @@ class OpponentBoardWidget extends StatelessWidget {
     } else if (celebratingLine == lineName) {
       // Fallback: 기존 celebratingLine 호환
       line = DecoratedBox(
-        key: const Key('opponent-celebration'),
+        key: const Key('opponent-celebration-fallback'),
         decoration: BoxDecoration(
           boxShadow: [
             BoxShadow(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,8 @@ class OnlineGameScreen extends ConsumerStatefulWidget {
   ConsumerState<OnlineGameScreen> createState() => _OnlineGameScreenState();
 }
 
+enum _ShakeType { none, celebration, foul }
+
 class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _hasDiscarded = false;
@@ -45,6 +48,9 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
 
   // Foul 연출 상태
   bool _foulTriggered = false;
+  // Damped screen shake
+  late final AnimationController _shakeController;
+  _ShakeType _shakeType = _ShakeType.none;
 
   // Emote state
   bool _showEmotePicker = false;
@@ -71,6 +77,10 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AudioService.instance.init();
+    _effectManager.onStateChanged = () {
+      if (mounted) setState(() {});
+    };
+    _shakeController = AnimationController(vsync: this);
     _turnPulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -118,6 +128,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     _countdownTimer?.cancel();
     _turnHighlightTimer?.cancel();
     _lineCelebTimer?.cancel();
+    _shakeController.dispose();
     _turnPulseController.dispose();
     AudioService.instance.stopBgm();
     super.dispose();
@@ -362,6 +373,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       // 라인 완성 → Celebration만 (Early Warning 없음)
       final level = getCelebrationLevel(simulated, line);
       if (level > 0) {
+        debugPrint('[EFFECT] set: h=$handNum line=$line level=$level cards=${simulated.length}');
         _effectManager.setCelebration(handNum, line, level);
         // 사운드 즉시 재생 (#14: _checkCelebration은 서버 반영 전이라 도달 불가)
         if (_effectManager.markSoundPlayed(handNum, line)) {
@@ -383,10 +395,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
         setState(() {
           _localPlacements.add((card: card, line: line, impact: true));
         });
-        // 1.5초 후 earlyWarning 만료 → 리빌드
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (mounted) setState(() {});
-        });
+        // 위젯 onEffectComplete 콜백이 자연 소멸 처리
       } else {
         setState(() {
           _localPlacements.add((card: card, line: line, impact: false));
@@ -394,42 +403,26 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       }
     }
 
-    _checkCelebration();
     _checkFoulAnimation();
     _tryAutoConfirm();
   }
 
-  /// 라인 완성 시 핸드 강도에 따라 축하 사운드 재생
-  void _checkCelebration() {
-    final onlineState = ref.read(onlineGameNotifierProvider);
-    final handNum = onlineState.handNumber;
-    final board = _getMyBoard();
-    final lines = {'top': board.top, 'mid': board.mid, 'bottom': board.bottom};
-
-    for (final entry in lines.entries) {
-      final maxCards = entry.key == 'top' ? 3 : 5;
-      if (entry.value.length == maxCards && _effectManager.getCelebration(handNum, entry.key) == 0) {
-        final level = getCelebrationLevel(entry.value, entry.key);
-        if (level >= 1) {
-          _effectManager.setCelebration(handNum, entry.key, level);
-          if (_effectManager.markSoundPlayed(handNum, entry.key)) {
-            if (level >= 3) {
-              AudioService.instance.playScoop();
-            } else {
-              AudioService.instance.playWin();
-            }
-          }
-          return;
-        }
-      }
-    }
+  /// Damped screen shake — Celebration(L3)과 Foul 분리
+  void _triggerShake(_ShakeType type) {
+    if (_shakeController.isAnimating) return;
+    _shakeType = type;
+    _shakeController.duration = Duration(
+      milliseconds: type == _ShakeType.foul ? 500 : 450,
+    );
+    _shakeController.forward(from: 0);
   }
 
   /// 보드 완성 시 Foul 감지 → 충격 연출 트리거
   void _checkFoulAnimation() {
-    final board = _getMyBoard();
+    final board = _getEffectiveBoard();
     if (board.isFull() && checkFoul(board) && !_foulTriggered) {
       setState(() => _foulTriggered = true);
+      _triggerShake(_ShakeType.foul);
       AudioService.instance.playFoul();
       Future.delayed(const Duration(milliseconds: 1500), () {
         if (mounted) setState(() => _foulTriggered = false);
@@ -447,6 +440,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       _hasDiscarded = true;
       _discardedCard = card;
     });
+    _checkFoulAnimation();
     _tryAutoConfirm();
   }
 
@@ -456,28 +450,38 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (onlineState.isInFantasyland) {
       final board = _getMyBoard();
       if (board.isFull()) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _onConfirm();
-        });
+        _scheduleConfirm(onlineState.handNumber);
       }
       return;
     }
 
-    // R1: 5장 모두 배치 → 즉시 auto-confirm (discard 불필요)
+    // R1: 5장 모두 배치 → auto-confirm
     if (onlineState.currentRound == 1 && onlineState.hand.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _onConfirm();
-      });
+      _scheduleConfirm(onlineState.handNumber);
       return;
     }
 
-    // 4P R4: explicit confirm required, no auto-confirm
-    if (_is4pR4(onlineState)) return;
+    // 4P R5: explicit confirm required, no auto-confirm
+    if (_is4pR5(onlineState)) return;
 
     // R2~R5: 2장 배치 + 1장 버림 → auto-confirm
     if (onlineState.currentRound > 1 &&
         onlineState.hand.isEmpty &&
         _hasDiscarded) {
+      _scheduleConfirm(onlineState.handNumber);
+    }
+  }
+
+  /// 이펙트가 활성 상태면 500ms 지연 후 confirm, 아니면 즉시
+  void _scheduleConfirm(int handNum) {
+    final hasActiveEffect = _effectManager.hasActiveWarnings ||
+        ['top', 'mid', 'bottom'].any((l) => _effectManager.getCelebration(handNum, l) > 0);
+    debugPrint('[EFFECT] scheduleConfirm: hasEffect=$hasActiveEffect handNum=$handNum');
+    if (hasActiveEffect) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _onConfirm();
+      });
+    } else {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _onConfirm();
       });
@@ -497,23 +501,22 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       Future.delayed(const Duration(milliseconds: 300), () {
         if (mounted) {
           ref.read(onlineGameNotifierProvider.notifier).confirmPlacement();
-          _effectManager.clearAll();
           setState(() {
             _hasDiscarded = false;
             _discardedCard = null;
-            _localPlacements.clear();
           });
         }
       });
       return;
     }
 
+    debugPrint('[EFFECT] confirm: handNum=${onlineState.handNumber} round=${onlineState.currentRound}');
     notifier.confirmPlacement();
-    _effectManager.clearAll();
+    // _localPlacements는 서버 stateUpdate 도착 시 ref.listen에서 정리
+    // → 서버 응답 전까지 카드+이펙트가 보드에 유지됨
     setState(() {
       _hasDiscarded = false;
       _discardedCard = null;
-      _localPlacements.clear();
     });
   }
 
@@ -526,8 +529,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       return board.isFull();
     }
 
-    // 4P R4: 2장 모두 배치하면 confirm (discard 불필요)
-    final is4pR4 = _is4pR4(onlineState);
+    // 4P R5: 2장 모두 배치하면 confirm (discard 불필요)
+    final is4pR4 = _is4pR5(onlineState);
     if (is4pR4) {
       return onlineState.hand.isEmpty;
     }
@@ -538,7 +541,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     return true;
   }
 
-  bool _is4pR4(OnlineState onlineState) {
+  bool _is4pR5(OnlineState onlineState) {
     final playerCount = (onlineState.gameState?['players'] as Map?)?.length ?? 0;
     return onlineState.currentRound == 5 && playerCount >= 4;
   }
@@ -615,7 +618,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (prev?.connectionState == OnlineConnectionState.reconnecting &&
           next.connectionState == OnlineConnectionState.playing) {
         _lastDeadline = null;
-        _effectManager.clearAll();
+        _effectManager.forceClearAll();
       }
       if (next.connectionState == OnlineConnectionState.gameOver &&
           prev?.connectionState != OnlineConnectionState.gameOver) {
@@ -669,15 +672,34 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (prev?.phase == 'handScored' && next.phase != 'handScored') {
         _closeHandScoredDialog();
       }
-      if (prev?.currentRound != next.currentRound ||
-          prev?.handNumber != next.handNumber) {
-        _effectManager.clearAll();
+      if (prev?.handNumber != next.handNumber) {
+        debugPrint('[EFFECT] softClearAll: hand ${prev?.handNumber}→${next.handNumber}');
+        _effectManager.softClearAll();
+        // 최소 표시 시간 후 잔여 celebration 강제 정리
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) {
+            _effectManager.forceClearAll();
+            setState(() {});
+          }
+        });
         setState(() {
           _hasDiscarded = false;
           _discardedCard = null;
           _localPlacements.clear();
+          _foulTriggered = false;
         });
-        // 라운드/핸드 변경 시 deadline 재확인 (stateUpdate가 먼저 도착한 경우)
+        if (next.turnDeadline != null && next.turnTimeLimit > 0) {
+          _startCountdown(next.turnDeadline!, next.turnTimeLimit);
+        }
+      } else if (prev?.currentRound != next.currentRound) {
+        debugPrint('[EFFECT] clearRound: round ${prev?.currentRound}→${next.currentRound}');
+        _effectManager.clearRound();
+        setState(() {
+          _hasDiscarded = false;
+          _discardedCard = null;
+          _localPlacements.clear();
+          _foulTriggered = false;
+        });
         if (next.turnDeadline != null && next.turnTimeLimit > 0) {
           _startCountdown(next.turnDeadline!, next.turnTimeLimit);
         }
@@ -713,13 +735,13 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     final availableLines = _getAvailableLines(myBoard);
     // FL이면 discard 버튼 필요 없음 (confirm 시 자동 discard)
     // 4인 R4: 2장 모두 배치 (버림 없음) → isPineapple=false로 DISCARD UI 비활성화
-    final is4pR4 = _is4pR4(onlineState);
+    final is4pR4 = _is4pR5(onlineState);
     final isPineapple = onlineState.currentRound > 1 && !onlineState.isInFantasyland && !is4pR4;
     final opponents = _buildOpponents(onlineState, notifier);
 
     final myColor = _getMyColor();
 
-    return Scaffold(
+    Widget scaffold = Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: Text('Hand ${onlineState.handNumber} - R${onlineState.currentRound}'),
@@ -973,7 +995,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                       ),
                     if (_hasDiscarded && _discardedCard != null) const SizedBox(width: 8),
                     // Show confirm button: always for R0 and 4P R4, hide only when auto-confirmed in pineapple rounds
-                    if (!(!_is4pR4(onlineState) && isPineapple &&
+                    if (!(!_is4pR5(onlineState) && isPineapple &&
                         onlineState.hand.isEmpty &&
                         _canConfirm()))
                       Semantics(
@@ -1031,6 +1053,35 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       ],
       ),
     );
+
+    // L3/Foul damped screen shake — 게임 영역만 적용
+    scaffold = AnimatedBuilder(
+      animation: _shakeController,
+      builder: (context, child) {
+        if (!_shakeController.isAnimating) return child!;
+        final t = _shakeController.value;
+        final isFoul = _shakeType == _ShakeType.foul;
+        final ampX = isFoul ? 5.0 : 3.0;
+        final ampY = isFoul ? 2.5 : 1.5;
+        final ampR = isFoul ? 0.010 : 0.006;
+        final freq = isFoul ? 4.0 : 3.0;
+        final decay = pow(1 - t, isFoul ? 1.5 : 2.5);
+        final wave = sin(2 * pi * freq * t);
+        final dx = ampX * wave * decay;
+        final dy = ampY * wave * decay;
+        final rz = ampR * wave * decay;
+        return Transform(
+          transform: Matrix4.identity()
+            ..setTranslationRaw(dx, dy, 0)
+            ..rotateZ(rz),
+          alignment: Alignment.center,
+          child: child,
+        );
+      },
+      child: scaffold,
+    );
+
+    return scaffold;
   }
 
   Widget _buildReconnectingOverlay() {
@@ -1204,7 +1255,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (_hasDiscarded && _discardedCard != null) {
       notifier.undiscardCard(_discardedCard!);
     }
-    _effectManager.clearAll();
+    _effectManager.forceClearAll();
     setState(() {
       _localPlacements.clear();
       _hasDiscarded = false;
@@ -1247,38 +1298,76 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
     if (scores == null || players == null) return const SizedBox.shrink();
 
     final activePlayers = onlineState.gameState?['activePlayers'] as List<dynamic>? ?? [];
+    final handNumber = onlineState.handNumber;
 
     return Semantics(
       label: 'score-bar',
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: scores.entries.map((entry) {
-          final name = (players[entry.key]
-                  as Map<String, dynamic>?)?['name'] ??
-              entry.key;
-          final score = entry.value as int? ?? 0;
-          final isMe = entry.key == onlineState.playerId;
-          final seatIdx = activePlayers.indexOf(entry.key);
-          final color = PlayerColors.forSeat(seatIdx >= 0 ? seatIdx : 0);
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Semantics(
-              label: 'score-chip-${entry.key}',
-              value: '$score',
-              child: Chip(
-                backgroundColor: isMe ? color.primary : color.background,
-                label: Text(
-                  '$name: $score',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
-                    fontSize: 12,
+        children: [
+          // 현재 핸드 번호
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              'H$handNumber',
+              style: TextStyle(color: Colors.grey[500], fontSize: 11),
+            ),
+          ),
+          ...scores.entries.map((entry) {
+            final name = (players[entry.key]
+                    as Map<String, dynamic>?)?['name'] ??
+                entry.key;
+            final score = entry.value as int? ?? 0;
+            final isMe = entry.key == onlineState.playerId;
+            final seatIdx = activePlayers.indexOf(entry.key);
+            final seatColor = PlayerColors.forSeat(seatIdx >= 0 ? seatIdx : 0);
+            final scoreColor = score > 0
+                ? const Color(0xFF4CAF50)
+                : score < 0
+                    ? const Color(0xFFE53935)
+                    : Colors.white70;
+            final scoreText = score > 0 ? '+$score' : '$score';
+            final shortName = name.length > 8 ? '${name.substring(0, 8)}..' : name;
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Semantics(
+                label: 'score-chip-${entry.key}',
+                value: '$score',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: isMe ? seatColor.primary.withValues(alpha: 0.8) : seatColor.background.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(16),
+                    border: isMe ? Border.all(color: seatColor.border, width: 1.5) : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        shortName,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        scoreText,
+                        style: TextStyle(
+                          color: scoreColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
-          );
-        }).toList(),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -1324,6 +1413,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
                   handNumber: ref.read(onlineGameNotifierProvider).handNumber,
                   onUndoCard: _onTapPlacedCard,
                   showFoulAnimation: _foulTriggered,
+                  onScreenShake: () => _triggerShake(_ShakeType.celebration),
                 ),
               ),
             ),

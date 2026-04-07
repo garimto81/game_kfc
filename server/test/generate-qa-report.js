@@ -15,7 +15,9 @@ const ROOT_DIR = path.join(__dirname, '..', '..');
 const date = new Date().toISOString().slice(0, 10);
 const reportDir = path.join(ROOT_DIR, 'docs', '04-report');
 const timeStr = new Date().toTimeString().slice(0, 5).replace(':', '');
-const reportPath = path.join(reportDir, `qa-report-${date}-${timeStr}.md`);
+const qaRunId = `qa-report-${date}-${timeStr}`;
+const reportPath = path.join(reportDir, `${qaRunId}.md`);
+process.env.QA_RUN_ID = qaRunId;
 
 // ============================================================
 // 헬퍼
@@ -169,7 +171,7 @@ function killServer(proc) {
 // ============================================================
 
 function formatScreenshots() {
-  const screenshotBase = path.join(ROOT_DIR, 'e2e', 'reports', 'screenshots');
+  const screenshotBase = path.join(ROOT_DIR, 'e2e', 'reports', 'screenshots', qaRunId);
   if (!fs.existsSync(screenshotBase)) return '> 스크린샷 디렉토리 없음\n';
 
   const dirs = fs.readdirSync(screenshotBase).filter((d) => {
@@ -481,8 +483,8 @@ async function main() {
     e2eSection += `- **마지막 실행 상태**: ${lastRun.status === 'passed' ? '✅ PASS' : '❌ FAIL'}\n`;
   }
 
-  // 스크린샷 디렉토리 통계
-  const screenshotBase = path.join(ROOT_DIR, 'e2e', 'reports', 'screenshots');
+  // 스크린샷 디렉토리 통계 (현재 run 폴더 기준)
+  const screenshotBase = path.join(ROOT_DIR, 'e2e', 'reports', 'screenshots', qaRunId);
   if (fs.existsSync(screenshotBase)) {
     const dirs = fs.readdirSync(screenshotBase).filter((d) =>
       fs.statSync(path.join(screenshotBase, d)).isDirectory()
