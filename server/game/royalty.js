@@ -133,9 +133,9 @@ function checkFantasylandStay(board) {
     return true;
   }
 
-  // Mid Quads+
+  // Mid Full House+
   const midHand = evaluateHand5(board.mid);
-  if (midHand.handType >= HAND_TYPE.FOUR_OF_A_KIND) {
+  if (midHand.handType >= HAND_TYPE.FULL_HOUSE) {
     return true;
   }
 

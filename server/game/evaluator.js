@@ -220,10 +220,9 @@ function isFoul(board) {
   const bottomVsMid = compareHands(bottomHand, midHand);
   if (bottomVsMid < 0) return true;
 
-  // Mid >= Top 체크 (5장 vs 3장이므로 handType만 비교)
-  // 같은 handType일 때는 primary rank(kickers[0])만 비교
-  if (midHand.handType < topHand.handType) return true;
-  if (midHand.handType === topHand.handType && midHand.kickers[0] < topHand.kickers[0]) return true;
+  // Mid >= Top 체크 (5장 vs 3장이므로 handType + 전체 kicker 비교)
+  const midVsTop = compareHands(midHand, topHand);
+  if (midVsTop < 0) return true;
 
   return false;
 }
