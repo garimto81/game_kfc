@@ -57,3 +57,33 @@ node server/test/generate-qa-report.js    # 체크리스트 리포트
 node server/test/detailed-qa-test.js      # 핸드별 상세 + ML fine-tune
 node server/test/model-evaluator.js       # 모델 평가 + 추이 기록
 ```
+
+## PRD 규칙 (2026-04-17 도입)
+
+이 프로젝트는 **PRD-first** 정책을 엄격히 따른다. `/check --all` 감사(2026-04-17)에서 PRD 공백이 CRITICAL 보안 이슈로 이어진 선례가 있음.
+
+### PRD 매핑 테이블
+
+| 도메인 | PRD |
+|--------|-----|
+| 게임 규칙 (OFC Pineapple) | `docs/00-prd/prd-game-rules.prd.md` |
+| 실시간 프로토콜 (REST + WS) | `docs/00-prd/prd-realtime-protocol.prd.md` |
+| 인증·세션·보안 | `docs/00-prd/prd-auth-security.prd.md` |
+| UX 화면 흐름 | `docs/00-prd/prd-ux-flow.prd.md` |
+| 이펙트 시스템 | `docs/00-prd/prd-effect-system.prd.md` |
+| QA 자동화 | `docs/00-prd/prd-qa-automation.prd.md` |
+| 배포/인프라 | `docs/00-prd/prd-deployment.prd.md` |
+| ML 자동 학습 | `docs/00-prd/prd-ml-autolearn.prd.md` |
+
+### 필수 규칙
+
+1. **구현 전 PRD 확인 의무**: 신규 기능·변경·버그 수정은 위 테이블에서 관련 PRD 먼저 탐색. 범위 외면 stub PRD(`/prd-update --new`) 작성 후 진행.
+2. **커밋 메시지 인용**: feat/fix 커밋은 가능하면 관련 PRD 섹션 인용 — `feat: X (prd-game-rules#Fantasyland)` 형식.
+3. **Changelog 갱신 의무**: 기능 변경 PR은 대상 PRD의 `## Changelog` 테이블에 엔트리 1줄 추가. 변경 유형(MARKET/PRODUCT/TECH), 결정 근거 필수.
+4. **DoD + 범위 외 필수**: 모든 신규 PRD는 `## DoD`, `## 범위 외` 섹션 포함.
+5. **Drift 방지**: PRD Changelog의 최근 엔트리가 30일 초과하면 해당 도메인 PR 전에 Changelog 점검 먼저.
+6. **backlog 연동**: `docs/backlog.md`의 각 항목은 `관련 PRD` 필드 필수.
+
+### PRD 전략 문서
+
+- `docs/01-plan/prd-reinforcement-strategy.md` — 전체 8개 PRD 커버리지·Gap 매트릭스·Stage 로드맵 (2026-04-17 작성)

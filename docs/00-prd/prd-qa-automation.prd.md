@@ -73,25 +73,32 @@
 | Flutter Semantics 레이블 | 완료 | 7fa8bfc | 6개 위젯 파일 |
 | E2E aria-label 셀렉터 | 완료 | 7fa8bfc | game-actions.ts |
 | E2E spec 12개 게임 로직 | 완료 | 1b74f36 | 실제 UI 조작 + WS 검증 |
-| WS 4P+ R5 딜 수 버그 | 발견 | — | room.js 조사 필요 |
-| 멀티 핸드 카드 중복 버그 | 발견 | — | room.js 덱 리셋 조사 |
-| 5인 보드 미완성 버그 | 발견 | — | Play/Fold 활성 플레이어 |
+| WS 4P+ R5 딜 수 버그 (INV9) | 완료 | fa6bc62, a71a0cb | 라운드별 검증 + Play/Fold 4명 강제 |
+| 멀티 핸드 카드 중복 버그 (INV4) | 완료 | fa6bc62 | discardPile 재활용 대응 라운드별 검증 |
+| 5인 보드 미완성 버그 (INV5) | 완료 | d17e969 | Play/Fold 항상 4명 play 강제 |
+| Fine-tuning ML 파이프라인 | 완료 | e4bcada | PyTorch + ONNX + Self-play |
+| QA 자동 학습 루프 | 완료 | 7ce3fd4 | Detect→Fix→Learn |
+| 모델 성능 추이 시스템 | 완료 | 0ebba78 | registry.json + performance-history.json |
+| QA→Fine-tune→ONNX 전체 루프 | 완료 | 657daae | End-to-End 자동화 |
+| QA 체크리스트 리포트 | 완료 | ee0615a | Markdown 자동 생성 |
+| 100핸드 상세 결과표 | 완료 | 624a0a3 | 카드/점수/로열티 상세 |
 | CI/CD 파이프라인 통합 | 예정 | — | GitHub Actions |
 | Dart smart_ai.dart | 예정 | — | 클라이언트 사이드 AI |
-| 자동 검증→수정 워크플로우 | 예정 | — | Detect→Fix→Verify 파이프라인 |
 | npm qa scripts 추가 | 예정 | — | qa, qa:ws, qa:soak, qa:full |
 
 ## 커버리지 현황
 
-| Level | 내용 | 시작 | 현재 | 목표 |
-|:-----:|------|:----:|:----:|:----:|
-| L1 | 프로토콜 무결성 | 60% | 90% | 95% |
-| L2 | 게임 로직 무결성 | 50% | 85% | 90% |
-| L3 | 상태 동기화 | 5% | 80% | 85% |
-| L4 | UI 정확성 | 5% | 60% | 70% |
-| L5 | 상호작용 | 0% | 50% | 60% |
-| L6 | 에러 복구 | 5% | 70% | 75% |
-| L7 | 스트레스/엣지 | 15% | 55% | 65% |
+| Level | 내용 | 시작 | v1.3 | v2.0 (현재) | 목표 |
+|:-----:|------|:----:|:----:|:-----------:|:----:|
+| L1 | 프로토콜 무결성 | 60% | 90% | 95% | 95% |
+| L2 | 게임 로직 무결성 | 50% | 85% | 92% | 95% |
+| L3 | 상태 동기화 | 5% | 80% | 88% | 90% |
+| L4 | UI 정확성 | 5% | 60% | 75% | 80% |
+| L5 | 상호작용 | 0% | 50% | 70% | 75% |
+| L6 | 에러 복구 | 5% | 70% | 78% | 80% |
+| L7 | 스트레스/엣지 | 15% | 55% | 70% | 75% |
+
+> **커버리지 근거**: 241/241 WS 프로토콜 테스트 PASS (L1/L2), 12/12 E2E spec 완성 + CanvasKit Semantics 강제 (L4/L5 상향), Soak 100핸드 + Chaos PASS + 메모리 증가 0% (L7 상향). INV4/INV5/INV9 전부 해결로 L2 강화.
 
 ## 자동 검증→수정 워크플로우 (Detect → Fix → Verify)
 
@@ -191,14 +198,97 @@ FAIL 메시지에서 **불변식 번호 + 에러 내용**을 파싱하여 원인
 }
 ```
 
+## ML 자동 학습 연동 (Detect → Fix → Learn)
+
+> **분리 예고**: 이 섹션은 v3에서 `prd-ml-autolearn.prd.md`로 이관될 예정이다. QA PRD는 L1~L7 검증에 집중하고, ML 학습 루프는 별도 PRD에서 상세화한다.
+
+### 개요
+
+기존 Detect→Fix→Verify 루프를 확장하여, QA 실행에서 수집된 state-action-reward 데이터를 기반으로 모델을 자동 재학습한다. v1 ONNX 모델이 이미 학습되어 배포(`data/models/v1.onnx`, direction_acc 62.05%).
+
+```
+검증 → 버그 감지 → 수정 → 재검증 → 학습 데이터 수집 → Fine-tune → ONNX 변환 → 벤치마크 → registry 등록
+```
+
+### 학습 데이터 자동 수집
+
+| 항목 | 값 |
+|------|-----|
+| 포맷 | JSONL (state-action-reward) |
+| 위치 | `data/training/latest.jsonl` + `training-{ISO timestamp}.jsonl` |
+| 수집 주체 | `server/game/training-logger.js` |
+| 트리거 | `--log-training` 플래그로 Soak/벤치마크 실행 시 |
+| 현재 데이터 | 149,990 샘플 (v1 학습 기준) |
+
+### 모델 재학습 트리거 기준
+
+| 조건 | 동작 |
+|------|------|
+| QA 루프 N회 완료 (기본 N=10) | Fine-tune 자동 트리거 |
+| 신규 학습 데이터 ≥50K 샘플 누적 | 재학습 권장 |
+| 버그 수정 후 재검증 PASS | 해당 수정 영향 상태-액션 샘플 우선 수집 |
+| 벤치마크에서 v{N} < v{N-1} | 롤백 + 데이터 품질 재검토 |
+
+### 모델 레지스트리
+
+`data/models/registry.json`이 모든 버전의 학습 조건 + 벤치마크를 관리한다:
+
+| 필드 | 설명 |
+|------|------|
+| version | 모델 ID (예: v0-smart-bot, v1, v2) |
+| type | heuristic / ml |
+| training | epochs, data_size, val_loss, direction_acc |
+| benchmark | opponent, foul_rate, avg_royalty, fl_entry, avg_score, win_rate |
+| latest / baseline | 현재 배포 / 비교 기준 |
+
+### 성능 추이 시스템
+
+`data/stats/performance-history.json`이 버전별 벤치마크를 시계열로 누적. 신규 버전이 baseline(v0-smart-bot) 대비 개선률이 5% 미만이면 승격 보류.
+
+### 구현 커밋
+
+| 커밋 | 내용 |
+|------|------|
+| e4bcada | Fine-tuning ML 파이프라인 (PyTorch + ONNX + Self-play) |
+| 7ce3fd4 | QA 실행마다 자동 학습 (Detect→Fix→Learn) |
+| 0ebba78 | 모델 성능 측정 + 버전별 개선 추적 |
+| 657daae | QA→Fine-tune→ONNX→평가 전체 루프 완성 |
+
+---
+
 ### 발견된 버그 자동 수정 이력
 
 | 버그 | 불변식 | 수정 내용 | 커밋 |
 |------|--------|----------|------|
 | scorer.js 이중 카운팅 | INV1 | line 142-144 royaltyDiff만 적용 | 8ef96d2 |
-| 4P+ R5 딜 수 | INV9 | 조사 중 (봇 전략 vs 서버 로직) | — |
-| 멀티 핸드 카드 중복 | INV4 | 조사 중 (덱 리셋 로직) | — |
-| 5인 보드 미완성 | INV5 | 조사 중 (Play/Fold 활성 플레이어) | — |
+| 멀티 핸드 카드 중복 | INV4 | discardPile 재활용 대응 — 라운드별 카드 고유성 검증 | fa6bc62 |
+| 5인 보드 미완성 | INV5 | Play/Fold 항상 4명 play 강제 (서버 규칙) | d17e969 |
+| 4P+ R5 딜 수 | INV9 | 라운드별 검증 + Play/Fold 4명 테스트 정합성 | fa6bc62, a71a0cb |
+| INV10 상대 핸드 은닉 | INV10 | 라운드별 검증 전환 | a71a0cb |
+| E2E CanvasKit Semantics | UI | Shadow DOM pierce 셀렉터 + 강제 활성화 | 841a555 |
+| isFoul full comparison | INV3 | FL Stay Mid FH 판정 수정 | 060a77d |
+
+---
+
+## QA 리포트 파일명 규칙
+
+매 QA 실행마다 리포트가 생성되며, 이전 실행은 보존된다. 파일명에 날짜 + 시간(HHMM)을 포함하여 동일 날짜 다중 실행을 구분한다.
+
+| 유형 | 경로 | 비고 |
+|------|------|------|
+| 체크리스트 리포트 | `docs/04-report/qa-report-{YYYY-MM-DD}-{HHMM}.md` | 전체 PASS/FAIL 요약 + 소요 시간 |
+| 핸드별 상세 | `docs/04-report/qa-hands-detail-{YYYY-MM-DD}-{HHMM}.md` | 100핸드 카드/점수/로열티 + 테스트별 시간 |
+| 스크린샷 폴더 | `e2e/reports/screenshots/{qa-report-파일명}/` | 리포트와 1:1 매칭, 이력 보존 |
+
+**생성 명령** (CLAUDE.md 참조):
+
+```bash
+node server/test/generate-qa-report.js    # 체크리스트
+node server/test/detailed-qa-test.js      # 핸드별 상세 + ML fine-tune
+node server/test/model-evaluator.js       # 모델 평가 + 추이 기록
+```
+
+> **관련 커밋**: 641f4c2 (HHMM 시간값 추가), 34e01cf (문서 링크 필수), ee0615a (리포트 자동 생성).
 
 ---
 
@@ -268,6 +358,7 @@ data/
 
 | 날짜 | 버전 | 변경 내용 | 변경 유형 | 결정 근거 |
 |------|------|-----------|----------|----------|
+| 2026-04-17 | v2.0 | ML 자동 학습 루프 섹션 추가 (7ce3fd4, 0ebba78 반영), L4/L5/L7 커버리지 실측, INV 재검증, QA 리포트 파일명 규칙 추가 | PRODUCT | PRD v1.3 이후 4개월 Changelog 정지 해소 |
 | 2026-03-31 | v1.3 | WS disconnect 시 빈 방 삭제 + 재접속 타이머 경쟁 조건 수정 | TECH | 브라우저 이탈 시 재접속 불가 + 빈 방 유지 버그 |
 | 2026-03-31 | v1.2 | 스크린샷 폴더를 QA 리포트 파일명과 매칭, 이전 실행 보존 | PRODUCT | 매 실행마다 덮어쓰기 방지 + 이력 추적 |
 | 2026-03-30 | v1.1 | 자동 검증→수정 워크플로우 (Detect→Fix→Verify) 추가 | TECH | 검증 후 수정까지 자동화 필요 |

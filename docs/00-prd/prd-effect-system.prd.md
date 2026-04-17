@@ -99,19 +99,46 @@
 
 ## 구현 상태
 
-| 항목 | 상태 | 비고 |
+| 항목 | 상태 | 근거 커밋 | 비고 |
+|------|------|----------|------|
+| EffectManager 클래스 | 완료 | 797439c | `lib/logic/effect_manager.dart` 중앙 관리 |
+| isImpactPlacement 확장 | 완료 | 6b5fb4a | Flush/Straight 패턴 추가 |
+| BoardWidget effectManager 연동 | 완료 | 6b5fb4a, 3c1e1fd | `lib/ui/widgets/board_widget.dart` |
+| BUG A: 배타적 이펙트 중첩 방지 | **해결됨** | 87933c7, 35f9fd0 | celebLevel 적용 시 Early Warning 제외 + effective board로 배치 즉시 반영 |
+| BUG B: Level 1 celebration 사운드 | **해결됨** | 87933c7, eafcdef | setCelebration 누락 수정 + 사운드 데드락 근본 해결 (#14) |
+| BUG C: Early Warning 배치 카드 포함 | **해결됨** | 87933c7 | 트립 3번째 카드까지 이펙트 대상 포함 (#13) |
+| 서버 lineCompleted | 완료 | ed6a670, d514648 | `server/game/room.js`, `server/index.js` |
+| 상대 보드 이펙트 | 완료 | d514648 | `lib/ui/widgets/opponent_board_widget.dart` |
+| EFX-4 Excited 판정 | 완료 | — | `findExcitingCards()` + `_getExcitedCards()` 연동 (`lib/logic/hand_evaluator.dart:202`, `lib/ui/screens/online_game_screen.dart:1217`) |
+| EFX-4 Excited 시각 연출 | **부분** | — | amber glow + shake 연출 스펙 대비 HandWidget 적용 범위 미검증, 후속 QA 필요 |
+| EFX-5 Foul 연출 (scatter + playFoul) | 완료 | ab0b102, b443c93, 060a77d | `_checkFoulAnimation()` + scatter 오프셋/회전 (`lib/ui/widgets/board_widget.dart:51`, `online_game_screen.dart:426`) |
+| EFX-5 Foul 우선순위 차단 | **부분** | — | Foul 중 celebration/impact 비활성 로직 명시적 가드 확인 필요, 후속 작업 |
+| W1~W4 사운드 정책 | **결정 필요** | — | 현재 스펙 "없음"이나 Trips/Flush/Straight 형성 피드백 오디오 추가 여부 재검토 필요 |
+
+## 후속 작업
+
+v1.0 → v2.0 드리프트 해소 과정에서 확인된 결정 보류 및 검증 항목.
+
+### 사운드 정책 (W1~W4)
+
+현재 Early Warning(W1~W4) 사운드는 모두 "없음"으로 스펙되어 있으나, Celebration 사운드와의 피드백 격차가 크다는 이슈가 잠재.
+
+| 옵션 | 장점 | 단점 |
 |------|------|------|
-| EffectManager 클래스 | 완료 | `lib/logic/effect_manager.dart` |
-| isImpactPlacement 확장 | 완료 | Flush/Straight 패턴 추가 |
-| BoardWidget effectManager 연동 | 완료 | `lib/ui/widgets/board_widget.dart` |
-| 배타적 이펙트 적용 | **버그** | 라인 완성 시 impact+celebLevel 중첩 (BUG A) |
-| Level 1 celebration | **버그** | Level 1 setCelebration/사운드 누락 (BUG B) |
-| Early Warning 카드 포함 | **버그** | 배치 카드 자체가 이펙트 대상에서 빠짐 (BUG C) |
-| 서버 lineCompleted | 완료 | `server/game/room.js`, `server/index.js` |
-| 상대 보드 이펙트 | 완료 | `lib/ui/widgets/opponent_board_widget.dart` |
+| 현행 유지 (무음) | Celebration 사운드 강조, 과도한 오디오 피로 방지 | 형성 단계 피드백 약함 |
+| 저음량 chime 추가 | 패 형성 과정 체감 강화 | Trips/Flush 구분 설계 필요, 음원 추가 필요 |
+
+**결정 필요자**: 기획 / **마감**: EFX-4 시각 연출 QA 시점과 병합.
+
+### QA 대상 항목
+
+- EFX-4 Excited: HandWidget에서 `_getExcitedCards()` 결과가 amber glow + shake 3Hz + 무한 shimmer 1200ms로 렌더링되는지 시각 확인 (PRD 스펙 60번 줄).
+- EFX-5 Foul: Foul 트리거 중 `effectManager.clearAll()` 호출로 celebration/impact가 완전히 차단되는지 확인, 우선순위 가드 명시 코드 필요 시 추가.
+- 관련 QA 리포트 경로: `docs/04-report/qa-report-{날짜}-{시간}.md`
 
 ## Changelog
 
 | 날짜 | 버전 | 변경 내용 | 변경 유형 | 결정 근거 |
 |------|------|-----------|----------|----------|
+| 2026-04-17 | v2.0 | BUG A/B/C 최신 커밋 기준 재분류, EFX-4/5 미구현 명시, W1~W4 사운드 정책 결정 필요 | PRODUCT | PRD v1.0 이후 커밋 흐름 미반영 드리프트 해소 |
 | 2026-04-02 | v1.0 | 최초 작성 — 이펙트 12가지 기획 명세 | PRODUCT | 이펙트 PRD 부재 발견, 코드 기반 역설계 |
