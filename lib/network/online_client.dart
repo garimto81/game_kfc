@@ -105,27 +105,32 @@ class OnlineClient {
   }
 
   /// WebSocket: 연결 + 참가
-  Future<void> connectAndJoin(String roomId, String playerName) async {
+  Future<void> connectAndJoin(String roomId, String playerName, {String password = ''}) async {
     _intentionalDisconnect = true;
     disconnect();
     _intentionalDisconnect = false;
     currentRoomId = roomId;
     final wsUrl = _toWsUrl(_serverUrl);
-    final tokenQuery = authToken != null ? '?token=$authToken' : '';
+    // CRIT-3: URL에서 토큰 제거, 연결 후 메시지 기반 인증 사용
     _channel =
-        WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId$tokenQuery'));
+        WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId'));
 
     _channel!.stream.listen(
       (data) {
-        final json = jsonDecode(data as String) as Map<String, dynamic>;
-        if (json['type'] == 'pong') {
-          _missedPongs = 0;
+        try {
+          final json = jsonDecode(data as String) as Map<String, dynamic>;
+          if (json['type'] == 'pong') {
+            _missedPongs = 0;
+            return;
+          }
+          _messageController.add(json);
+          if (json['type'] == 'joinAccepted') {
+            playerId = json['payload']['playerId'] as String;
+            sessionToken = json['payload']['sessionToken'] as String?;
+          }
+        } catch (e) {
+          print('[WS-CLIENT] Failed to parse message: $e');
           return;
-        }
-        _messageController.add(json);
-        if (json['type'] == 'joinAccepted') {
-          playerId = json['payload']['playerId'] as String;
-          sessionToken = json['payload']['sessionToken'] as String?;
         }
       },
       onDone: () {
@@ -139,8 +144,12 @@ class OnlineClient {
     );
 
     print('[WS-CLIENT] connectAndJoin: roomId=$roomId playerName=$playerName');
-    // Join request
-    _send({'type': 'joinRequest', 'payload': {'playerName': playerName}});
+    // CRIT-3: 인증 토큰이 있으면 메시지로 먼저 전송
+    if (authToken != null) {
+      _send({'type': 'auth', 'payload': {'token': authToken}});
+    }
+    // Join request (password는 hasPassword 방에서만 서버가 검증)
+    _send({'type': 'joinRequest', 'payload': {'playerName': playerName, 'password': password}});
 
     // Heartbeat every 25 seconds with pong validation
     _missedPongs = 0;
@@ -237,23 +246,29 @@ class OnlineClient {
       final completer = Completer<ReconnectResult>();
       _channel!.stream.listen(
         (data) {
-          final json = jsonDecode(data as String) as Map<String, dynamic>;
-          if (json['type'] == 'pong') {
-            _missedPongs = 0;
-            return;
-          }
-          _messageController.add(json);
-          if (!completer.isCompleted) {
-            if (json['type'] == 'reconnected') {
-              completer.complete(ReconnectResult.success);
-            } else if (json['type'] == 'error') {
-              final payload = json['payload'] as Map<String, dynamic>? ?? {};
-              if (payload['rejoinRequired'] == true) {
-                completer.complete(ReconnectResult.rejoinRequired);
-              } else {
-                completer.complete(ReconnectResult.failed);
+          try {
+            final json = jsonDecode(data as String) as Map<String, dynamic>;
+            if (json['type'] == 'pong') {
+              _missedPongs = 0;
+              return;
+            }
+            _messageController.add(json);
+            if (!completer.isCompleted) {
+              if (json['type'] == 'reconnected') {
+                completer.complete(ReconnectResult.success);
+              } else if (json['type'] == 'error') {
+                final payload = json['payload'] as Map<String, dynamic>? ?? {};
+                if (payload['rejoinRequired'] == true) {
+                  completer.complete(ReconnectResult.rejoinRequired);
+                } else {
+                  completer.complete(ReconnectResult.failed);
+                }
               }
             }
+          } catch (e) {
+            print('[WS-CLIENT] Failed to parse reconnect message: $e');
+            if (!completer.isCompleted) completer.complete(ReconnectResult.failed);
+            return;
           }
         },
         onDone: () {

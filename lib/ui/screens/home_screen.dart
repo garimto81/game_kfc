@@ -277,7 +277,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             ? Semantics(
                 label: 'join-room-button',
                 child: ElevatedButton(
-                  onPressed: () => _onJoinRoom(roomId),
+                  onPressed: () => _onJoinRoom(roomId, hasPassword: hasPassword),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.teal[600],
                     foregroundColor: Colors.white,
@@ -298,12 +298,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  void _onJoinRoom(String roomId) async {
+  void _onJoinRoom(String roomId, {bool hasPassword = false}) async {
     final currentName = ref.read(settingsNotifierProvider).playerName;
     final name = await _showNameInputDialog(currentName);
     if (name == null || name.isEmpty || !mounted) return;
+    String password = '';
+    if (hasPassword) {
+      final pw = await _showPasswordInputDialog();
+      if (pw == null || !mounted) return;
+      password = pw;
+    }
     ref.read(settingsNotifierProvider.notifier).setPlayerName(name);
-    ref.read(onlineGameNotifierProvider.notifier).joinRoom(roomId, name);
+    ref.read(onlineGameNotifierProvider.notifier).joinRoom(roomId, name, password: password);
+  }
+
+  Future<String?> _showPasswordInputDialog() async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.teal[900],
+        title: const Text('방 비밀번호', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          autofocus: true,
+          maxLength: 20,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: 'Password',
+            labelStyle: TextStyle(color: Colors.teal[200]),
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal[600],
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Join'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildLoadingOverlay(OnlineState onlineState) {
@@ -606,7 +650,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 if (!ctx.mounted) return;
                 Navigator.of(ctx).pop();
                 if (roomId != null && mounted) {
-                  notifier.joinRoom(roomId, pName);
+                  notifier.joinRoom(roomId, pName, password: passwordController.text.trim());
                 }
               },
               style: ElevatedButton.styleFrom(

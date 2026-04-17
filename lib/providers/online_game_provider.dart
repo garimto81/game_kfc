@@ -279,13 +279,13 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
   }
 
   /// 방 참가 + WebSocket 연결
-  Future<void> joinRoom(String roomId, String playerName) async {
+  Future<void> joinRoom(String roomId, String playerName, {String password = ''}) async {
     if (_client == null) return;
     state = state.copyWith(
       connectionState: OnlineConnectionState.connecting,
     );
     try {
-      await _client!.connectAndJoin(roomId, playerName);
+      await _client!.connectAndJoin(roomId, playerName, password: password);
       _client!.onUnexpectedDisconnect = () => _onConnectionLost();
       _messageSubscription = _client!.messageStream.listen(_handleMessage);
       state = state.copyWith(
@@ -544,6 +544,9 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           }
           reconnectFL = myReconnectData?['inFantasyland'] as bool?;
         }
+        final reconnectFolded = (reconnectGameState?['players']
+            as Map<String, dynamic>?)?[reconnectPlayerId]?['folded'] as bool?;
+        final reconnectCurrentTurn = reconnectGameState?['currentTurnPlayerId'] as String?;
         state = state.copyWith(
           connectionState: OnlineConnectionState.playing,
           playerId: reconnectPlayerId,
@@ -552,10 +555,15 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
           currentRound: reconnectRound ?? state.currentRound,
           phase: reconnectPhase ?? state.phase,
           isInFantasyland: reconnectFL ?? state.isInFantasyland,
+          isFolded: reconnectFolded ?? state.isFolded,
           handNumber: reconnectHandNum ?? state.handNumber,
           turnDeadline: reconnectDeadline,
           turnTimeLimit: reconnectTTL ?? state.turnTimeLimit,
           serverTimeOffset: reconnectOffset,
+          currentTurnPlayerId: reconnectCurrentTurn,
+          isMyTurn: reconnectCurrentTurn != null
+              ? reconnectCurrentTurn == reconnectPlayerId
+              : state.isMyTurn,
           clearError: true,
         );
         break;

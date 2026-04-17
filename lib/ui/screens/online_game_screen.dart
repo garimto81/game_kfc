@@ -379,8 +379,11 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
         if (_effectManager.markSoundPlayed(handNum, line)) {
           if (level >= 3) {
             AudioService.instance.playScoop();
+            AudioService.instance.playL3Bass(); // 레이어 채널, shake와 동기
+          } else if (level == 2) {
+            AudioService.instance.playWinMedium();
           } else {
-            AudioService.instance.playWin();
+            AudioService.instance.playWinSmall();
           }
         }
       }
@@ -392,6 +395,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       final isEarlyWarning = isImpactPlacement(card, line, lineCards, maxCards);
       if (isEarlyWarning) {
         _effectManager.addEarlyWarning(handNum, line, [...lineCards, card]);
+        AudioService.instance.playImpact();
+        if (settings.hapticEnabled) HapticFeedback.mediumImpact();
         setState(() {
           _localPlacements.add((card: card, line: line, impact: true));
         });
@@ -644,6 +649,10 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       // New hand dealt
       if (prev?.hand.isEmpty == true && next.hand.isNotEmpty) {
         AudioService.instance.playDeal();
+      }
+      // Fantasyland 진입 알림 (0→1 전이)
+      if (next.isInFantasyland && prev?.isInFantasyland != true) {
+        AudioService.instance.playFantasyland();
       }
       // Turn highlight animation — pulse for 3 seconds
       if (next.isMyTurn && prev?.isMyTurn != true) {

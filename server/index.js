@@ -17,9 +17,23 @@ const authRouter = require('./auth/auth-router');
 const rateLimit = require('express-rate-limit');
 
 db.init(process.env.DB_PATH || './data/ofc.db');
-jwtUtil.init(process.env.JWT_SECRET || 'dev-secret-change-in-production');
+
+// CRIT-1: JWT_SECRET 미설정 시 서버 기동 거부 (환경 무관)
+if (!process.env.JWT_SECRET) {
+  console.error('[FATAL] JWT_SECRET 환경변수가 설정되지 않았습니다. .env 파일 또는 docker-compose env 를 확인하세요.');
+  process.exit(1);
+}
+jwtUtil.init(process.env.JWT_SECRET);
 
 const app = express();
+
+// nginx 리버스 프록시 뒤에서 X-Forwarded-For 기반 rate limit 정확히 동작시키기 위함
+app.set('trust proxy', 1);
+
+// HIGH-4: 프로덕션 환경에서 CORS_ORIGIN 미설정 시 경고
+if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
+  console.warn('[WARN] CORS_ORIGIN 환경변수가 설정되지 않았습니다. 프로덕션에서는 명시적으로 설정하세요.');
+}
 app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
 app.use(express.json());
 app.use('/auth', rateLimit({ windowMs: 60000, max: 10 }), authRouter);
@@ -179,9 +193,11 @@ server.on('upgrade', (request, socket, head) => {
   } else if (pathname.startsWith('/ws/game/')) {
     const url = new URL(request.url, `http://${request.headers.host}`);
     const roomId = pathname.split('/ws/game/')[1];
+    // CRIT-3: URL 토큰 파싱 유지 (하위 호환) + 메시지 기반 인증 추가
     const jwtToken = url.searchParams.get('token');
     wss.handleUpgrade(request, socket, head, (ws) => {
       ws.authUser = jwtToken ? jwtUtil.verify(jwtToken) : null;
+      ws.authCompleted = !!ws.authUser; // 메시지 기반 인증 완료 여부
       handleGameConnection(ws, roomId);
     });
   } else {
@@ -346,6 +362,24 @@ function handleGameMessage(ws, room, msg, getPlayerId, setPlayerId) {
       try { ws.send(JSON.stringify({ type: 'pong', payload: {} })); } catch (_) {}
       break;
 
+    // CRIT-3: 메시지 기반 JWT 인증 (URL 토큰 대체)
+    case 'auth': {
+      const token = payload.token;
+      if (token) {
+        const user = jwtUtil.verify(token);
+        if (user) {
+          ws.authUser = user;
+          ws.authCompleted = true;
+          ws.send(JSON.stringify({ type: 'authResult', payload: { success: true, name: user.name } }));
+        } else {
+          ws.send(JSON.stringify({ type: 'authResult', payload: { success: false, message: '유효하지 않은 토큰입니다.' } }));
+        }
+      } else {
+        ws.send(JSON.stringify({ type: 'authResult', payload: { success: false, message: '토큰이 필요합니다.' } }));
+      }
+      break;
+    }
+
     case 'joinRequest':
       handleJoinRequest(ws, room, payload, setPlayerId);
       break;
@@ -411,6 +445,13 @@ function handleJoinRequest(ws, room, msg, setPlayerId) {
   }
   if (playerName.length > 50) {
     ws.send(JSON.stringify({ type: 'error', payload: { message: '플레이어 이름은 50자 이하여야 합니다.' } }));
+    return;
+  }
+
+  // CRIT-2: 방 비밀번호 검증 (hasPassword 방에 한정)
+  const providedPassword = typeof msg.password === 'string' ? msg.password : '';
+  if (!room.checkPassword(providedPassword)) {
+    ws.send(JSON.stringify({ type: 'error', payload: { message: '방 비밀번호가 올바르지 않습니다.', code: 'INVALID_PASSWORD' } }));
     return;
   }
 

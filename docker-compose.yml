@@ -2,6 +2,9 @@ services:
   game-server:
     build: ./server
     restart: unless-stopped
+    env_file: .env
+    volumes:
+      - game-data:/app/data
     expose:
       - "3000"
     healthcheck:
@@ -18,3 +21,6 @@ services:
     depends_on:
       game-server:
         condition: service_healthy
+
+volumes:
+  game-data:

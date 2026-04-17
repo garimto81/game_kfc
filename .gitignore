@@ -53,3 +53,6 @@ app.*.map.json
 *.jks
 e2e/node_modules/
 data/training/*.jsonl
+
+# Claude local state (commands, session, worktrees)
+.claude/

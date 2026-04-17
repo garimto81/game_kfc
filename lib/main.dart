@@ -3,7 +3,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'providers/settings_provider.dart';
 import 'ui/screens/home_screen.dart';
-import 'ui/screens/login_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,9 +34,8 @@ class OFCApp extends ConsumerWidget {
         ),
         useMaterial3: true,
       ),
-      initialRoute: '/',
+      initialRoute: '/home',
       routes: {
-        '/': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),
       },
     );

@@ -45,6 +45,7 @@ class Room extends EventEmitter {
     this.currentTurnIndex = 0;
     this.turnTimer = null;
     this.turnDeadline = null;
+    this.turnTimerGeneration = 0; // 타이머 세대 카운터 (레이스 컨디션 방지)
 
     // 딜러 버튼
     this.dealerButtonId = null;
@@ -142,6 +143,11 @@ class Room extends EventEmitter {
     if (!player) return null;
 
     const wasHost = this.hostId === playerId;
+
+    // 세션 토큰 정리 (메모리 누수 방지)
+    if (player.sessionToken) {
+      this.sessionTokens.delete(player.sessionToken);
+    }
 
     this.players.delete(playerId);
     this.playerOrder = this.playerOrder.filter(id => id !== playerId);
@@ -689,6 +695,16 @@ class Room extends EventEmitter {
   advanceTurn() {
     const nonFL = this.getNonFLActivePlayers();
 
+    // 비FL 전원 폴드/부재 → FL 완료 여부만 확인
+    if (nonFL.length === 0) {
+      const fl = this.getFLActivePlayers();
+      const allFLDone = fl.every(id => this.players.get(id).confirmed);
+      if (allFLDone || fl.length === 0) {
+        return this.endHand();
+      }
+      return { action: 'waitingForFL' };
+    }
+
     // 비FL 전원 확정 체크
     const allNonFLDone = nonFL.every(id => this.players.get(id).confirmed);
 
@@ -731,6 +747,21 @@ class Room extends EventEmitter {
     }
 
     if (safety >= nonFL.length) {
+      // 모든 비FL 플레이어가 confirmed → allNonFLDone 재검사
+      console.warn('[advanceTurn] safety 루프 소진 — 비FL 전원 confirmed 재검사');
+      const recheckDone = nonFL.every(id => this.players.get(id).confirmed);
+      if (recheckDone) {
+        this.round++;
+        if (this.round > 5 || this.deck.length === 0) {
+          const fl = this.getFLActivePlayers();
+          const allFLDone = fl.every(id => this.players.get(id).confirmed);
+          if (allFLDone) return this.endHand();
+          return { action: 'waitingForFL' };
+        }
+        this.currentTurnIndex = 0;
+        this.dealRound();
+        return { action: 'newRound', round: this.round, currentTurnPlayerId: this.getCurrentTurnPlayerId() };
+      }
       return { action: 'turnChanged', currentTurnPlayerId: this.getCurrentTurnPlayerId() };
     }
 
@@ -779,10 +810,12 @@ class Room extends EventEmitter {
     if (!currentPlayerId) return;
 
     this.turnDeadline = Date.now() / 1000 + this.turnTimeLimit;
+    const generation = ++this.turnTimerGeneration;
 
     this.turnTimer = setTimeout(() => {
       if (this.phase !== 'playing') return;
-      // Guard: 타이머 시작 시점과 현재 턴 플레이어가 다르면 무시
+      // Guard: 타이머 세대 불일치 → 이미 무효화된 타이머
+      if (generation !== this.turnTimerGeneration) return;
       if (currentPlayerId !== this.getCurrentTurnPlayerId()) return;
       const result = this.autoFold(currentPlayerId);
       if (result && this.onTurnTimeout) {
@@ -836,7 +869,10 @@ class Room extends EventEmitter {
       }
     }
 
-    const results = scoreHand(scorePlayers);
+    // 전원 폴드 시 빈 결과로 정상 종료
+    const results = Object.keys(scorePlayers).length > 0
+      ? scoreHand(scorePlayers)
+      : {};
 
     // 총점 업데이트 + 플레이어 이름 주입
     for (const [id, result] of Object.entries(results)) {
