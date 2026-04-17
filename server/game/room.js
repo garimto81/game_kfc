@@ -223,8 +223,9 @@ class Room extends EventEmitter {
     }
     this.connections.delete(playerId);
 
-    // waiting: 30초 후 퇴장, playing: 120초 후 퇴장
-    const timeout = this.phase === 'playing' ? 120000 : 30000;
+    // BUG-24: 모바일 탭 전환 시 튕김 방지 — waiting 5분, playing 2분
+    // 모바일 브라우저는 백그라운드에서 JS 타이머를 throttle하므로 긴 유예 필요
+    const timeout = this.phase === 'playing' ? 120000 : 300000;
     this.disconnectTimers.set(playerId, setTimeout(() => {
       this.disconnectTimers.delete(playerId);
       const p = this.players.get(playerId);

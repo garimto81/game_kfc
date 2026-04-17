@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
+// BUG-24: 모바일 웹 tab switch 감지
+import '_visibility_stub.dart'
+    if (dart.library.html) '_visibility_web.dart';
 
 enum ReconnectResult { success, failed, rejoinRequired }
 
@@ -15,8 +18,10 @@ class OnlineClient {
   bool get isConnected => _channel != null;
   Timer? _heartbeatTimer;
   void Function()? onUnexpectedDisconnect;
+  void Function()? onTabReturn;
   bool _intentionalDisconnect = false;
   int _missedPongs = 0;
+  bool _visibilityListenerInstalled = false;
 
   final _messageController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -158,6 +163,21 @@ class OnlineClient {
     }
     // Join request (password는 hasPassword 방에서만 서버가 검증)
     _send({'type': 'joinRequest', 'payload': {'playerName': playerName, 'password': password}});
+
+    // BUG-24: 웹 visibility API 리스너 설치 (1회만)
+    if (!_visibilityListenerInstalled) {
+      _visibilityListenerInstalled = true;
+      listenVisibility((visible) {
+        if (visible) {
+          print('[WS-CLIENT] tab returned to foreground — force heartbeat + reconnect check');
+          _missedPongs = 0;
+          try {
+            sendHeartbeat();
+          } catch (_) {}
+          onTabReturn?.call();
+        }
+      });
+    }
 
     // Heartbeat every 25 seconds with pong validation
     _missedPongs = 0;

@@ -185,6 +185,8 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
   StreamSubscription? _messageSubscription;
   StreamSubscription? _lobbySubscription;
   bool _isReconnecting = false;
+  // BUG-24: 재접속 시 비밀번호 보존 — state에 넣으면 UI 노출 우려로 private 필드
+  String _currentRoomPassword = '';
 
   @override
   OnlineState build() {
@@ -287,7 +289,11 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
     try {
       await _client!.connectAndJoin(roomId, playerName, password: password);
       _client!.onUnexpectedDisconnect = () => _onConnectionLost();
+      // BUG-24: 모바일 탭 복귀 시 ping 즉시 발송 → 끊겼으면 autoReconnect
+      _client!.onTabReturn = () => _onTabReturn();
       _messageSubscription = _client!.messageStream.listen(_handleMessage);
+      // BUG-24: 재접속 시 사용할 password 보존
+      _currentRoomPassword = password;
       state = state.copyWith(
         connectionState: OnlineConnectionState.inRoom,
         roomId: roomId,
@@ -298,6 +304,19 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
         connectionState: OnlineConnectionState.error,
         errorMessage: 'Failed to join room: $e',
       );
+    }
+  }
+
+  /// BUG-24: 모바일 탭 복귀 시 연결 확인 + 필요 시 autoReconnect
+  void _onTabReturn() {
+    if (_isReconnecting) return;
+    final cs = state.connectionState;
+    if (cs == OnlineConnectionState.playing ||
+        cs == OnlineConnectionState.inRoom) {
+      pingConnection();
+    } else if (cs == OnlineConnectionState.reconnecting ||
+               cs == OnlineConnectionState.error) {
+      autoReconnect();
     }
   }
 
@@ -856,7 +875,8 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
       final roomId = state.roomId;
       final name = state.myPlayerName;
       if (roomId != null && name != null) {
-        await joinRoom(roomId, name);
+        // BUG-24: 보존된 password 전달 (hasPassword 방 rejoin 성공)
+        await joinRoom(roomId, name, password: _currentRoomPassword);
       } else {
         state = state.copyWith(
           connectionState: OnlineConnectionState.error,
@@ -891,7 +911,8 @@ class OnlineGameNotifier extends _$OnlineGameNotifier {
       final roomId = state.roomId;
       final name = state.myPlayerName;
       if (roomId != null && name != null) {
-        await joinRoom(roomId, name);
+        // BUG-24: 보존된 password 전달 (hasPassword 방 rejoin 성공)
+        await joinRoom(roomId, name, password: _currentRoomPassword);
       } else {
         state = state.copyWith(
           connectionState: OnlineConnectionState.error,
