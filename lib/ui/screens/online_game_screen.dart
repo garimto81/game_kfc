@@ -646,6 +646,8 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen>
       if (next.phase == 'handScored' && prev?.phase != 'handScored') {
         AudioService.instance.playScore();
       }
+      // RW-10.3: dispose 후 state 업데이트 도달 가능성 차단
+      if (!mounted) return;
       // New hand dealt
       if (prev?.hand.isEmpty == true && next.hand.isNotEmpty) {
         AudioService.instance.playDeal();

@@ -115,6 +115,14 @@ class OnlineClient {
     _channel =
         WebSocketChannel.connect(Uri.parse('$wsUrl/ws/game/$roomId'));
 
+    // RW-10.1: handshake 완료 대기 (느린 네트워크에서 auth/joinRequest 유실 방지)
+    try {
+      await _channel!.ready;
+    } catch (e) {
+      print('[WS-CLIENT] channel.ready failed: $e');
+      rethrow;
+    }
+
     _channel!.stream.listen(
       (data) {
         try {

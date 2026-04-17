@@ -30,9 +30,10 @@ const app = express();
 // nginx 리버스 프록시 뒤에서 X-Forwarded-For 기반 rate limit 정확히 동작시키기 위함
 app.set('trust proxy', 1);
 
-// HIGH-4: 프로덕션 환경에서 CORS_ORIGIN 미설정 시 경고
+// RW-7: 프로덕션에서 CORS_ORIGIN 미설정 시 기동 거부 (기존 WARN → FATAL)
 if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
-  console.warn('[WARN] CORS_ORIGIN 환경변수가 설정되지 않았습니다. 프로덕션에서는 명시적으로 설정하세요.');
+  console.error('[FATAL] CORS_ORIGIN 환경변수가 설정되지 않았습니다. 프로덕션에서는 필수입니다. (예: https://example.com)');
+  process.exit(1);
 }
 app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
 app.use(express.json());
@@ -191,13 +192,11 @@ server.on('upgrade', (request, socket, head) => {
       handleLobbyConnection(ws);
     });
   } else if (pathname.startsWith('/ws/game/')) {
-    const url = new URL(request.url, `http://${request.headers.host}`);
     const roomId = pathname.split('/ws/game/')[1];
-    // CRIT-3: URL 토큰 파싱 유지 (하위 호환) + 메시지 기반 인증 추가
-    const jwtToken = url.searchParams.get('token');
+    // RW-6: URL 토큰 파싱 제거 (로그 노출 위험). 메시지 기반 auth (type:'auth')만 사용.
     wss.handleUpgrade(request, socket, head, (ws) => {
-      ws.authUser = jwtToken ? jwtUtil.verify(jwtToken) : null;
-      ws.authCompleted = !!ws.authUser; // 메시지 기반 인증 완료 여부
+      ws.authUser = null;
+      ws.authCompleted = false;
       handleGameConnection(ws, roomId);
     });
   } else {
@@ -437,6 +436,44 @@ function handleGameMessage(ws, room, msg, getPlayerId, setPlayerId) {
 // 게임 메시지 핸들러들
 // ============================================================
 
+// RW-8: 방 비밀번호 brute-force 방어
+// key: `${roomId}|${ip}` → { failures: number, lockedUntil: number|null }
+const passwordAttempts = new Map();
+const PW_MAX_FAILURES = 5;
+const PW_LOCKOUT_MS = 60_000;
+
+function getClientIp(ws) {
+  const req = ws.upgradeReq || ws._socket?.upgradeReq;
+  const xff = req?.headers?.['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
+  return ws._socket?.remoteAddress || 'unknown';
+}
+
+function checkPasswordLockout(roomId, ip) {
+  const key = `${roomId}|${ip}`;
+  const entry = passwordAttempts.get(key);
+  if (!entry) return { locked: false };
+  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+    return { locked: true, retryMs: entry.lockedUntil - Date.now() };
+  }
+  return { locked: false };
+}
+
+function recordPasswordFailure(roomId, ip) {
+  const key = `${roomId}|${ip}`;
+  const entry = passwordAttempts.get(key) || { failures: 0, lockedUntil: null };
+  entry.failures += 1;
+  if (entry.failures >= PW_MAX_FAILURES) {
+    entry.lockedUntil = Date.now() + PW_LOCKOUT_MS;
+    entry.failures = 0;
+  }
+  passwordAttempts.set(key, entry);
+}
+
+function clearPasswordFailures(roomId, ip) {
+  passwordAttempts.delete(`${roomId}|${ip}`);
+}
+
 function handleJoinRequest(ws, room, msg, setPlayerId) {
   const playerName = ws.authUser?.name || msg.playerName;
   if (!playerName || typeof playerName !== 'string') {
@@ -448,12 +485,20 @@ function handleJoinRequest(ws, room, msg, setPlayerId) {
     return;
   }
 
-  // CRIT-2: 방 비밀번호 검증 (hasPassword 방에 한정)
+  // CRIT-2 + RW-8: 방 비밀번호 검증 + brute-force 잠금
+  const ip = getClientIp(ws);
+  const lockout = checkPasswordLockout(room.id, ip);
+  if (lockout.locked) {
+    ws.send(JSON.stringify({ type: 'error', payload: { message: `비밀번호 시도 초과. ${Math.ceil(lockout.retryMs / 1000)}초 후 재시도`, code: 'PASSWORD_LOCKED' } }));
+    return;
+  }
   const providedPassword = typeof msg.password === 'string' ? msg.password : '';
   if (!room.checkPassword(providedPassword)) {
+    recordPasswordFailure(room.id, ip);
     ws.send(JSON.stringify({ type: 'error', payload: { message: '방 비밀번호가 올바르지 않습니다.', code: 'INVALID_PASSWORD' } }));
     return;
   }
+  clearPasswordFailures(room.id, ip);
 
   const result = room.addPlayer(playerName, ws);
   if (result.error) {

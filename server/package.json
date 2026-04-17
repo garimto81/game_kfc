@@ -7,8 +7,16 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "test": "node game/scorer.test.js && node game/evaluator.test.js && node game/royalty.test.js && node game/deck.test.js",
+    "test:auth": "node test/auth.test.js",
+    "test:ws": "node test/ws-protocol.test.js",
+    "test:password-gate": "node test/password-gate.test.js",
+    "qa": "npm test && npm run test:auth && npm run test:ws && npm run test:password-gate",
+    "qa:soak": "node test/soak-test.js",
     "qa:report": "node test/generate-qa-report.js",
-    "qa:eval": "node test/model-evaluator.js"
+    "qa:detailed": "node test/detailed-qa-test.js",
+    "qa:eval": "node test/model-evaluator.js",
+    "qa:benchmark": "node test/bot-benchmark.js",
+    "qa:training": "node test/generate-training.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
