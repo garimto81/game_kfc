@@ -14,6 +14,7 @@ _없음_
 |----|------|--------|-----------|------|
 | B-001 | 이펙트 미출력 — clearAll 타이밍 레이스 + setCelebration 리빌드 누락 | 2026-04-12 | `87933c7`, `eafcdef`, `35f9fd0` | effect-system v2.0 BUG A/B/C 해결 확인. `setCelebration` 직후 사운드 재생 및 `BoardWidget`의 effective board 전달로 상태 전이 해결. |
 | B-002 | 이펙트가 호출되지 않거나 계획된 이펙트로 호출되지 않는 문제 | 2026-04-12 | `87933c7`, `35f9fd0`, `060a77d` | `_checkFoulAnimation` + `_getExcitedCards` 연동 확인. celebLevel 전달·애니메이션 생명주기 모두 prd-effect-system.prd.md v2.0 `후속 작업` 이관됨 (QA 재검증 필요). |
+| B-003 | 모바일 탭 전환 시 방에서 튕기는 버그 | 2026-04-17 | `52ebc2f` | 서버 waiting 타임아웃 30s→300s + Flutter Web visibility API 리스너 추가 + autoReconnect password 보존 + tab 복귀 시 즉시 heartbeat. 관련 PRD: prd-realtime-protocol (세션 수명주기), prd-auth-security (rejoin 흐름). |
 
 ## 진행 규칙
 
