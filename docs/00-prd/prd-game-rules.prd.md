@@ -61,14 +61,58 @@
 
 ## Foul 판정 및 결과
 
-Foul된 플레이어는 모든 라인을 상대에게 내주고 Royalty가 0으로 무효화된다.
+Foul된 플레이어는 모든 라인을 상대에게 내주고 Royalty가 0으로 무효화되며, Fantasyland 진입/유지 자격도 박탈된다.
 
-- **판정**: `evaluator.js:210-228` (`isFoul`).
+### 판정 조건
+
+핸드 강도 순서 **Bottom ≥ Middle ≥ Top** 을 위반하면 Foul이다. 불완전 보드(3/5/5 미만) 역시 Foul로 처리한다.
+
+- **불완전 보드 즉시 Foul**: `evaluator.js:211-213` — `board.top.length !== 3 || board.mid.length !== 5 || board.bottom.length !== 5` 이면 즉시 `true` 반환.
+- **Bottom < Mid 위반**: `evaluator.js:219-221` — `compareHands(bottomHand, midHand) < 0` → Foul.
+- **Mid < Top 위반**: `evaluator.js:223-225` — `compareHands(midHand, topHand) < 0` → Foul.
+- **호출 위치**: `room.js:851` — `endHand()` 에서 완성 보드(13장)만 `isFoul()` 호출. 13장 미만이지만 0장 초과인 불완전 보드는 `room.js:852-854` 에서 별도로 `fouled = true` 강제.
+
+### 비교 기준 (Full Comparison — 커밋 `060a77d` 이후)
+
+`isFoul` 의 Mid vs Top 비교는 `compareHands()` 전체 비교 경로를 사용한다 (handType + 전체 kicker).
+
+| 시점 | Mid vs Top 비교 로직 | 문제 |
+|------|----------------------|------|
+| `060a77d` 이전 | `midHand.handType < topHand.handType` OR (같은 handType이면 `kickers[0]` 만 비교) | 같은 handType + 같은 primary rank에서 secondary kicker를 무시 → 오판 가능 |
+| `060a77d` 이후 | `compareHands(midHand, topHand)` 전체 경로 (handType → 모든 kicker 순차 비교) | 3장 Top의 kickers와 5장 Mid의 kickers를 동일한 compareHands로 대조 |
+
+- 근거: 커밋 `060a77d` — "isFoul full comparison + FL Stay Mid FH".
+- 코드: `evaluator.js:223-225` (현재). 이전 버전은 `midHand.handType < topHand.handType` + `kickers[0]` 부분 비교만 수행했다.
+
+### 점수 처리
+
+Foul 플레이어는 상대에게 자동으로 3라인을 내주고 스쿱 보너스까지 잃는다.
+
 - **Royalty 무효화**: `scorer.js:21-22` — `fouled ? { top: 0, mid: 0, bottom: 0, total: 0 } : calcTotalRoyalty(...)`.
-- **점수 결과**: `scorer.js:58-83` — 상대가 3라인 승리 + 스쿱 보너스 → `+6 / -6`.
-- **양쪽 Foul**: `scorer.js:53-57` — 무승부 (0점).
+- **상대 Scoop 자동 부여**: `scorer.js:58-83` — Foul 측은 `lineScore = { top: -1, mid: -1, bottom: -1 }` + `winsB = 3` 고정, 라인 핸드명은 `'Foul'` 로 치환.
+- **-6점 패널티 / +6점 보상**: `scorer.js:62-63, 75-76` — `results[idB].score += 6; results[idA].score -= 6;` (3라인 -3 + 스쿱 -3 = 총 -6). 상대는 대칭적으로 +6.
+- **Royalty 차분 가산**: `scorer.js:139, 143-144` — 정상 플레이어의 royalty 총합이 Foul 플레이어에 royalty 차이만큼 추가 가산된다 (Foul 측 royalty 는 0이므로 정상 플레이어는 자신의 royalty 만큼 추가 획득).
+- **양쪽 Foul**: `scorer.js:53-57` — 라인명은 `'Foul'` 로 표기되나 점수 증감은 없다 (무승부 0점).
 
-> TODO: 부분 Foul (예: Mid가 Top보다 낮지만 Bottom은 정상) 상세 사례.
+### Fantasyland 박탈
+
+Foul 시 FL 진입/유지 체크 자체가 건너뛰어지므로 FL 자격이 자동 박탈된다.
+
+- **박탈 근거**: `room.js:905` — `if (!player.folded && !player.fouled)` 가드. Foul된 플레이어는 이 블록에 진입하지 못해 `checkFantasylandEntry`, `checkFantasylandStay` 중 어느 것도 호출되지 않는다.
+- **결과**: `player.inFantasyland` 값은 이전 상태로 유지되지 않고, FL 중이던 플레이어가 Foul하면 **다음 핸드에 일반 딜링**을 받는다. (`room.js:908` 의 Stay 재평가 경로를 타지 못하므로 `inFantasyland = true` 가 유지되지 않는다.)
+  - TODO: 현재 구현은 Foul 시 `inFantasyland` 를 명시적으로 `false` 로 초기화하지 않고 가드로만 회피한다. 다음 핸드 시작 시 `startNewHand` 의 초기화 경로에서 `inFantasyland` 가 어떻게 처리되는지 보강 검증 필요.
+
+### Foul 케이스 예시 테이블
+
+| 케이스 | Top | Mid | Bottom | Foul? | 사유 (근거) |
+|--------|-----|-----|--------|:-----:|-------------|
+| 정상 | 66Q (Pair 6) | 88TQK (Pair 8) | JJ J55 (Trips J) | No | Bottom > Mid > Top 강도 순서 준수 (`evaluator.js:219-225`) |
+| Mid < Top Foul | QQ K (Pair Q) | 7722T (Two Pair 7-2) | AAQQ5 (Two Pair A-Q) | Yes | Mid Two Pair < Top Pair QQ — compareHands에서 `handType=TWO_PAIR` vs `ONE_PAIR` 이지만 Top의 Pair Q가 full comparison 경로에서 역전 가능 케이스. 실제로는 Mid(Two Pair)가 Top(Pair Q)보다 강함이 정상이나, `060a77d` 이전에는 secondary kicker 무시로 오판 가능. 정상 케이스: Top=Pair QQ, Mid=Pair TT → Mid < Top (Pair T < Pair Q) → Foul (`evaluator.js:223-225`) |
+| Bot < Mid Foul | 234 (High Card) | 99933 (Full House 9-3) | 88855 (Full House 8-5) | Yes | Bottom FH(8-5) < Mid FH(9-3) — primary rank 비교에서 Bottom 패 (`evaluator.js:219-221`) |
+| Top Quads 불가 | 777 | - | - | N/A | Top은 3장이므로 4-of-a-kind 평가 경로 자체가 존재하지 않음 (`evaluator.js:140-169`, `evaluateHand3` 은 `THREE_OF_A_KIND`, `ONE_PAIR`, `HIGH_CARD` 3종만 반환). Quads는 구조적으로 불가능. |
+| 불완전 보드 | 2장만 배치 | 5장 | 5장 | Yes | `board.top.length !== 3` 이므로 즉시 Foul (`evaluator.js:211-213`). 4인+ 게임에서 덱 소진 시 발생 가능 (`room.js:852-854`). |
+
+> TODO: 부분 Foul 엣지 케이스 (Mid가 Top과 같은 handType + 같은 primary rank이지만 secondary kicker 차이) 에 대한 자동화 테스트 목록.
 
 ## Royalty 표
 
@@ -237,3 +281,4 @@ PRD 부재 상태에서 구현이 진행된 만큼, 아래 항목은 "현재 코
 | 날짜 | 버전 | 변경 내용 | 변경 유형 | 결정 근거 |
 |------|------|-----------|----------|----------|
 | 2026-04-17 | v0.1 | skeleton 작성 (placeholder 다수, Stage 1). 코드 근거 라인 인용 완료. | - | 초기 작성 |
+| 2026-04-17 | v0.2 | Foul 판정 섹션 상세화 (판정 조건 / 비교 기준 / 점수 처리 / FL 박탈 / 케이스 테이블). 커밋 `060a77d` 의 full comparison 전환 이력 반영. | TECH | RW-4 game-rules Foul 상세화 요청 |

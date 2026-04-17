@@ -69,16 +69,97 @@
 - **수집 트리거**:
   - QA 테스트 실행 시마다 자동 (`detailed-qa-test.js` L560~)
   - 수동: `node server/test/generate-training.js --hands 10000`
-- **데이터 스키마** (실측):
+- **데이터 스키마** (실측 근거: `server/game/training-logger.js` L44~132):
   ```json
   {
-    "features": [/* extractFeatures(board, hand, round, deadCards) 결과 벡터 */],
-    "action_index": 123,
-    "reward": 4.58
+    "gameId": "string",
+    "handNumber": "integer (>= 1)",
+    "round": "integer (1..5)",
+    "playerId": "string",
+    "timestamp": "integer (epoch ms)",
+    "state": {
+      "board": {
+        "top": "Card[] (max 3)",
+        "mid": "Card[] (max 5)",
+        "bottom": "Card[] (max 5)"
+      },
+      "hand": "Card[] (max 14)",
+      "dead_cards": "Card[]",
+      "remaining_deck_size": "integer (0..52)",
+      "current_royalty": {
+        "top": "number",
+        "mid": "number",
+        "bottom": "number"
+      },
+      "is_fantasyland": "boolean",
+      "round": "integer (1..5)",
+      "hand_number": "integer"
+    },
+    "action": {
+      "placements": [
+        {
+          "card": { "rank": "integer (2..14)", "suit": "integer (1..4)" },
+          "line": "string ('top'|'mid'|'bottom')"
+        }
+      ],
+      "discard": { "rank": "integer (2..14)", "suit": "integer (1..4)" } 
+    },
+    "evaluation": {
+      "score_function": "number",
+      "foul_risk": "number (0..1)",
+      "fl_probability": "number (0..1)"
+    },
+    "result": {
+      "final_score": "number",
+      "royalties": { "top": "number", "mid": "number", "bottom": "number", "total": "number" },
+      "fouled": "boolean",
+      "fantasyland_entry": "boolean",
+      "opponent_scores": "number[]"
+    }
   }
   ```
-  - feature 차원 / 정확한 필드 타입: `TODO: server/game/feature-extractor.js 상세 확인`
-  - action 인코딩: line(top=0, mid=1, bottom=2)을 3진법으로 인코딩 (최대 5장, `generate-training.js` L74~82)
+  **필드 설명**:
+  - `gameId`, `handNumber`: 결정 그룹핑 키 (동일 핸드의 여러 decision 연결)
+  - `round`: 1 (초기 5장 배치) ~ 5 (3장 중 2장 배치 + 1장 버림)
+  - `state.board`: 현재까지 배치된 카드. `top`≤3, `mid`≤5, `bottom`≤5
+  - `state.hand`: 현재 손에 든 카드. 일반 라운드 3장, Fantasyland 최대 14장
+  - `state.dead_cards`: 버려졌거나 상대 보드에 보이는 공개 카드
+  - `action.placements`: 이번 결정에서 각 카드를 어느 라인에 배치했는지
+  - `action.discard`: 버린 카드 (round 2~5에서 필수, round 1은 `null`)
+  - `evaluation`: smart-bot이 해당 결정 시점에 계산한 내부 점수·리스크
+  - `result`: 핸드 종료 후 소급 채워짐 (`logHandResult()`). fine-tune 시 reward로 사용
+  - `Card`: `{ rank: 2..14 (J=11,Q=12,K=13,A=14), suit: 1..4 (1=club,2=diamond,3=heart,4=spade) }`
+- **action 인코딩** (학습용 변환, `generate-training.js` L74~82): line(top=0, mid=1, bottom=2)을 3진법으로 인코딩하여 단일 `action_index` 생성 (최대 5장). 학습 파이프라인 (`ml/dataset.py`)이 위 JSONL을 읽어 `{features, action_index, reward}` 형태로 변환
+- **Feature 벡터 명세** (실측 근거: `server/game/feature-extractor.js` L22~73):
+  - **총 차원**: `62` (고정)
+  - **함수 시그니처**: `extractFeatures(board, hand, round, deadCards) → number[62]`
+  - **구성**:
+    ```
+    인덱스 [0..25]   : Board cards (13 slots × 2)
+                      - top  3슬롯 × (rank/14, suit/4)   → 6 features
+                      - mid  5슬롯 × (rank/14, suit/4)   → 10 features
+                      - bot  5슬롯 × (rank/14, suit/4)   → 10 features
+                      빈 슬롯 = [0, 0]
+    인덱스 [26..53]  : Hand cards (14 slots × 2)
+                      - 각 슬롯 × (rank/14, suit/4)      → 28 features
+                      Fantasyland 최대 14장, 일반은 앞쪽 1~3만 사용
+    인덱스 [54..56]  : 라인 채움 비율
+                      - top.length / 3
+                      - mid.length / 5
+                      - bottom.length / 5
+    인덱스 [57]      : round / 5
+    인덱스 [58..61]  : Dead card 수트별 카운트 / 13
+                      - [club, diamond, heart, spade]
+    ```
+  - **정규화 규칙**:
+    - `rank`: 2..14 → `rank/14` (A=14 → 1.0, 2 → 0.143)
+    - `suit`: 1..4 → `suit/4` (1=club → 0.25, 4=spade → 1.0)
+    - 빈 슬롯은 `[0, 0]` 패딩
+  - **입력 조건**:
+    - `board`: `{ top: Card[], mid: Card[], bottom: Card[] }` 구조. 누락 라인은 `[]` 또는 `undefined` 허용
+    - `hand`: `Card[]` 또는 `undefined`
+    - `round`: `1..5` 정수 또는 `undefined` (→ 0)
+    - `deadCards`: `Card[]` 또는 `undefined`. suit `1..4` 범위 밖은 카운트 제외
 - **저장 위치**: `data/training/latest.jsonl` + `data/training/training-{timestamp}.jsonl`
 - **실측**: 학습 데이터 149,990건 (registry v1 기준)
 
@@ -108,32 +189,46 @@
 ## 모델 레지스트리 (`data/models/registry.json`)
 
 - **파일 경로**: `data/models/registry.json`
-- **스키마** (실측):
+- **스키마** (실측 근거: `data/models/registry.json`):
   ```json
   {
     "versions": [
       {
-        "version": "v0-smart-bot",
-        "file": null,
-        "created": "2026-03-31T00:00:00Z",
-        "type": "heuristic" | "ml",
-        "training": { "epochs": 50, "data_size": 149990, "val_loss": 103.82, "direction_acc": 62.05 } | null,
+        "version": "string (required, unique — 예: 'v0-smart-bot', 'v1', 'v{timestamp}')",
+        "file": "string|null (required — ONNX 파일명, heuristic은 null)",
+        "created": "string (required, ISO 8601 datetime)",
+        "type": "string (required, enum: 'heuristic'|'ml')",
+        "training": {
+          "epochs": "integer (>= 1)",
+          "data_size": "integer (학습 샘플 수)",
+          "val_loss": "number (검증 손실)",
+          "direction_acc": "number (0..100, 방향 정확도 %)"
+        },
         "benchmark": {
-          "opponent": "simple-bot",
-          "hands": 500,
-          "foul_rate": 11.2,
-          "avg_royalty": 0.68,
-          "fl_entry": 1,
-          "avg_score": 4.58,
-          "win_rate_vs_simple": 60.6,
-          "date": "2026-03-31"
-        } | null
+          "opponent": "string (비교 대상 봇 이름)",
+          "hands": "integer (평가 핸드 수)",
+          "foul_rate": "number (0..100, %)",
+          "avg_royalty": "number",
+          "fl_entry": "number (Fantasyland 진입률 %)",
+          "avg_score": "number",
+          "win_rate_vs_simple": "number (0..100, %)",
+          "date": "string (YYYY-MM-DD)"
+        }
       }
     ],
-    "latest": "v1",
-    "baseline": "v0-smart-bot"
+    "latest": "string (required — versions[].version 중 하나)",
+    "baseline": "string (required — versions[].version 중 하나)"
   }
   ```
+  **필드 설명**:
+  - `versions`: 모든 등록 모델의 이력. 시간순 append-only
+  - `version`: 고유 ID. `v0-smart-bot`(휴리스틱), `v1`,`v2`,...(ML 순차), `v{timestamp}`(자동 fine-tune)
+  - `file`: `data/models/` 하위 ONNX 파일명. heuristic은 `null` (smart-bot.js 코드 실행)
+  - `type`: `heuristic` = 규칙 기반 봇 / `ml` = PyTorch→ONNX 변환 모델
+  - `training`: ML 모델만 존재. heuristic은 `null`
+  - `benchmark`: `model-evaluator.js` 실행 결과. 미평가 시 `null`
+  - `latest`: 현재 서버/클라이언트 추론에 사용되는 버전
+  - `baseline`: 롤백 기준점. 통상 `v0-smart-bot` 고정
 - **버전 명명 규칙**:
   - `v0-smart-bot` — 휴리스틱 베이스라인 (smart-bot.js 1222줄)
   - `v1`, `v2`, ... — ML 모델 순차 번호
@@ -162,6 +257,33 @@
   - `avg_score` (평균 점수)
   - `win_rate_A` (승률)
 - **성능 추이**: `data/stats/performance-history.json` (배열, 실행마다 append)
+- **performance-history.json 스키마** (실측 근거: `data/stats/performance-history.json`):
+  ```json
+  [
+    {
+      "version": "string (required — registry.json의 versions[].version)",
+      "date": "string (required, YYYY-MM-DD)",
+      "opponent": "string (required — 비교 대상 봇 이름)",
+      "hands": "integer (required — 평가 핸드 수)",
+      "botA_foul_rate": "number (0..100, %)",
+      "botA_avg_royalty": "number",
+      "botA_fl_entry": "number (Fantasyland 진입률 %)",
+      "botA_avg_score": "number",
+      "botB_foul_rate": "number (0..100, %)",
+      "botB_avg_royalty": "number",
+      "botB_fl_entry": "number",
+      "botB_avg_score": "number",
+      "win_rate_A": "number (0..100, %)"
+    }
+  ]
+  ```
+  **필드 설명**:
+  - 최상위: JSON 배열. `model-evaluator.js` 실행마다 1개 항목 append
+  - `version`: 대상 모델(BotA) 버전 — `registry.json`과 join 키
+  - `botA_*`: 대상 모델 지표 (registry.benchmark와 동일한 스냅샷)
+  - `botB_*`: 비교 대상 지표 (기본 `simple-bot`). 기준선 검증용
+  - `win_rate_A`: BotA 승률 (%). 롤백 판정의 1차 지표
+  - 정렬: 시간순 append-only. 동일 버전 다중 실행 허용 (통계적 유의성 확보)
 - **실측 예시** (performance-history.json):
   - v0-smart-bot vs simple-bot: foul 10~11%, avg_score 3.64~4.77, 승률 56~62%
 
